@@ -7,7 +7,12 @@
 // against a live calibration run (session 0a722727, Claude Code 2.1.168).
 
 import { test, expect } from "bun:test";
-import { isPermissionPrompt } from "../src/driver";
+import { isPermissionPrompt, DENY_KEYSTROKE } from "../src/driver";
+
+test("DENY_KEYSTROKE is a single ESC byte (0x1b)", () => {
+  expect(DENY_KEYSTROKE.length).toBe(1);
+  expect(DENY_KEYSTROKE.charCodeAt(0)).toBe(0x1b);
+});
 
 test("detects the permission box (verbatim Spike B phrases)", () => {
   const box =

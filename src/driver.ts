@@ -140,7 +140,7 @@ export function isPermissionPrompt(buffer: string): boolean {
  * within ~100ms, the tool is NOT executed, and the assistant turn continues
  * normally until the prompt-ready signal reappears.
  */
-const DENY_KEYSTROKE = "";
+export const DENY_KEYSTROKE ="";
 
 /** Rolling buffer cap in bytes — keeps memory bounded. */
 const BUFFER_CAP = 16384;
