@@ -144,6 +144,11 @@ export function startSession(config: Config, hooks: DriverHooks = {}): IPty {
 
   let buffer = "";
   let injected = false;
+  // Turn-done detection only starts once the message has actually been written
+  // (after the 50ms render delay), so the startup ready-signal can't be mistaken
+  // for the post-turn one in the window before injection completes.
+  let awaitingTurn = false;
+  let turnDone = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
   pty.onData((data: string) => {
@@ -158,16 +163,19 @@ export function startSession(config: Config, hooks: DriverHooks = {}): IPty {
       setTimeout(() => {
         ptyWrite(pty, config.message + "\r");
         buffer = ""; // reset so the post-turn ready check starts clean
+        awaitingTurn = true;
       }, 50);
       return;
     }
 
-    if (injected) {
+    if (awaitingTurn && !turnDone) {
       // After injection, wait for the prompt to reappear AND the stream to
-      // go quiet (debounce) before declaring the turn done.
+      // go quiet (debounce) before declaring the turn done — exactly once.
       if (isReady(buffer)) {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
+          if (turnDone) return;
+          turnDone = true;
           hooks.onTurnDone?.();
         }, TURN_DONE_DEBOUNCE_MS);
       }
