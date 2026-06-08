@@ -11,8 +11,9 @@ test("stream-json emits init, one event per message, then result", async () => {
 
   const parsed = lines.map(l => JSON.parse(l));
   expect(parsed[0]).toMatchObject({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111" });
-  expect(parsed[1]).toMatchObject({ type: "assistant" });
-  expect(parsed[2]).toMatchObject({ type: "user" });
+  // Events preserve transcript order: user prompt, assistant, user tool_result, assistant.
+  expect(parsed[1]).toMatchObject({ type: "user" });
+  expect(parsed[2]).toMatchObject({ type: "assistant" });
   expect(parsed[parsed.length - 1]).toMatchObject({ type: "result", subtype: "success" });
   expect(parsed.length).toBe(6);
 });
