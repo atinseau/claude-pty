@@ -1,0 +1,178 @@
+// src/driver.ts
+//
+// Thin pty driver: spawns the real Claude Code TUI, detects prompt-ready /
+// turn-done signals from the raw byte stream, injects the user message, and
+// notifies the caller when the assistant turn completes.
+//
+// ─── Windows / Bun incompatibilities (see spike/hello-pty.ts for details) ───
+//
+// 1) Bun net.Socket write bug (Windows):
+//    node-pty wraps the ConPTY conin handle in net.Socket({fd, writable:true}).
+//    Bun v1.x rejects all writes to fd-based writable sockets ("Socket is
+//    closed"). Fix: monkey-patch net.Socket BEFORE node-pty loads to capture
+//    the conin fd; write via fs.writeSync(coninFd, data) instead.
+//
+// 2) bun --compile module resolution:
+//    Static import of node-pty would bundle its CJS code and prevent the
+//    net.Socket patch from running first. Use createRequire with the absolute
+//    CWD-rooted path to node-pty's entry point so the patch fires before
+//    node-pty's module init.
+//
+// ─── Calibrated ready / turn-done detection (Claude Code 2.1.168) ───────────
+//
+// The raw pty stream is inspected for the prompt character ❯ (U+276F, a heavy
+// right-pointing angle quotation mark) followed by a space — this is the exact
+// character the TUI renders as its input prompt indicator.
+//
+// Evidence from calibration run (session cc29e93c-3ac2-4bd3-905b-e86afcd493d1):
+//
+//   Startup ready (chunk #9):
+//     RAW: "...────────────────────────────────────────────────[m❯ [2m..."
+//     → The giant initial frame always contains ❯  followed by placeholder text.
+//
+//   Turn done (chunk #67):
+//     RAW: "[?25l...[38;1H❯ [38;2;153;153;153m[40;51H← for agents..."
+//     → After the assistant reply, cursor moves to row 38 col 1, prints ❯ .
+//
+// Both startup and post-turn share the literal substring "❯ " (U+276F +
+// U+00A0 NON-BREAKING SPACE) in the raw chunk. IMPORTANT: the space that
+// follows ❯ in the actual pty stream is U+00A0 (non-breaking space, 0xa0),
+// NOT a regular ASCII space (U+0020). This was confirmed by char-code
+// inspection: buffer[1973]=0x276f ("❯"), buffer[1974]=0xa0 (" "). Searching
+// for "❯ " (regular space) silently fails.
+//
+// Turn-done detection: the prompt reappears AND the stream stays quiet for
+// TURN_DONE_DEBOUNCE_MS (800 ms). This debounce prevents false fires between
+// tool calls where the TUI briefly re-renders the prompt.
+
+import { createRequire } from "module";
+import type { Config } from "./cli";
+import type { IPty } from "node-pty";
+
+const _nodePtyPath = process.cwd() + "/node_modules/node-pty/lib/index.js";
+const _require = createRequire(_nodePtyPath);
+
+// ─── Patch net.Socket to capture the conin fd (Windows Bun write fix) ────────
+let _coninFd: number | null = null;
+
+if (process.platform === "win32") {
+  const net = _require("net");
+  const OrigSocket = net.Socket;
+  net.Socket = function PatchedSocket(
+    opts?: { fd?: number; readable?: boolean; writable?: boolean },
+  ) {
+    if (
+      opts &&
+      typeof opts.fd === "number" &&
+      opts.readable === false &&
+      opts.writable === true
+    ) {
+      _coninFd = opts.fd;
+    }
+    return new OrigSocket(opts);
+  };
+  net.Socket.prototype = OrigSocket.prototype;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { spawn: _ptySpawn } = _require("./index.js") as typeof import("node-pty");
+const { writeSync: _fsWriteSync } = _require("fs") as typeof import("fs");
+
+/** Write to the pty — uses fs.writeSync on Windows due to Bun net.Socket bug. */
+function ptyWrite(pty: IPty, data: string): void {
+  if (process.platform === "win32" && _coninFd !== null) {
+    _fsWriteSync(_coninFd, data);
+  } else {
+    pty.write(data);
+  }
+}
+
+const CLAUDE_BIN =
+  process.env.CLAUDE_PTY_BIN ?? "C:\\Users\\arthur\\.local\\bin\\claude.exe";
+
+/**
+ * Prompt-ready predicate.
+ *
+ * Matches the raw pty stream when the TUI's input box is ready for input.
+ * The signal is "❯" (U+276F, HEAVY RIGHT-POINTING ANGLE QUOTATION MARK)
+ * followed by U+00A0 (NON-BREAKING SPACE). Claude Code 2.1.168 consistently
+ * emits this two-character sequence when the prompt row is rendered, at both
+ * startup and after each assistant turn.
+ *
+ * CALIBRATION NOTE: The space character after ❯ is U+00A0 (0xa0), NOT a
+ * regular ASCII space (U+0020). This was confirmed by char-code inspection of
+ * the live pty buffer (session cc29e93c-3ac2-4bd3-905b-e86afcd493d1):
+ *   buffer[1973] = 0x276f  (❯)
+ *   buffer[1974] = 0x00a0  (NBSP — the "space" after the prompt char)
+ * Searching for "❯ " (ASCII space) silently fails.
+ *
+ * Exported for unit testing — keep this pure (no side-effects).
+ */
+export function isReady(buffer: string): boolean {
+  // U+276F followed by U+00A0 (non-breaking space) — the real prompt signal.
+  return buffer.includes("❯ ");
+}
+
+/** Rolling buffer cap in bytes — keeps memory bounded. */
+const BUFFER_CAP = 16384;
+
+/** Debounce window after prompt reappears before firing onTurnDone. */
+const TURN_DONE_DEBOUNCE_MS = 800;
+
+export interface DriverHooks {
+  onReady?: () => void;
+  onTurnDone?: () => void;
+}
+
+/**
+ * Spawn the Claude Code TUI in a pty, inject config.message, and call hooks
+ * when the prompt is ready and when the assistant turn completes.
+ *
+ * Returns the IPty so the caller can kill() it after onTurnDone fires.
+ */
+export function startSession(config: Config, hooks: DriverHooks = {}): IPty {
+  // Build args: avoid duplicate --session-id if passthrough already contains it.
+  const args: string[] = config.passthrough.includes("--session-id")
+    ? [...config.passthrough]
+    : ["--session-id", config.sessionId, ...config.passthrough];
+
+  const pty: IPty = _ptySpawn(CLAUDE_BIN, args, {
+    cols: 120,
+    rows: 40,
+    cwd: process.cwd(),
+  });
+
+  let buffer = "";
+  let injected = false;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  pty.onData((data: string) => {
+    buffer += data;
+    if (buffer.length > BUFFER_CAP) buffer = buffer.slice(-BUFFER_CAP);
+
+    if (!injected && isReady(buffer)) {
+      // First time the prompt box appears — inject the user message.
+      injected = true;
+      hooks.onReady?.();
+      // Small delay to let the TUI finish rendering before we type
+      setTimeout(() => {
+        ptyWrite(pty, config.message + "\r");
+        buffer = ""; // reset so the post-turn ready check starts clean
+      }, 50);
+      return;
+    }
+
+    if (injected) {
+      // After injection, wait for the prompt to reappear AND the stream to
+      // go quiet (debounce) before declaring the turn done.
+      if (isReady(buffer)) {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          hooks.onTurnDone?.();
+        }, TURN_DONE_DEBOUNCE_MS);
+      }
+    }
+  });
+
+  return pty;
+}
