@@ -70,15 +70,31 @@ async function readStableTranscript(
 async function main() {
   const config = parseArgs(Bun.argv.slice(2));
 
-  // Wait for the pty driver to signal that the assistant turn is done.
-  await new Promise<void>((resolve) => {
+  // Wait for the pty driver to signal that the assistant turn is done, with a
+  // global deadline so a broken readiness signal (e.g. a future Claude Code
+  // version changing the prompt) fails loudly instead of hanging forever.
+  const turnTimeoutMs = Number(process.env.CLAUDE_PTY_TURN_TIMEOUT_MS) || 600_000;
+  const timedOut = await new Promise<boolean>((resolve) => {
     const pty = startSession(config, {
       onTurnDone: () => {
+        clearTimeout(timer);
         pty.kill();
-        resolve();
+        resolve(false);
       },
     });
+    const timer = setTimeout(() => {
+      pty.kill();
+      resolve(true);
+    }, turnTimeoutMs);
   });
+
+  if (timedOut) {
+    process.stderr.write(
+      `timed out after ${turnTimeoutMs}ms waiting for the turn to complete ` +
+        `(session ${config.sessionId})\n`,
+    );
+    process.exit(1);
+  }
 
   // Now poll the transcript for a stable final assistant event (flush timing fix).
   const events = await readStableTranscript(config.sessionId);
