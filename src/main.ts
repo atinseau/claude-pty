@@ -1,5 +1,6 @@
 // src/main.ts
 import { parseArgs } from "./cli";
+import { combineMessage, readStdin } from "./stdin";
 import { startSession } from "./driver";
 import { reconstruct } from "./reconstruct";
 import { costOf } from "./pricing";
@@ -24,6 +25,8 @@ function isTerminal(events: TranscriptEvent[]): boolean {
 async function main() {
   const argv = Bun.argv.slice(2);
   const config = parseArgs(argv);
+  const stdinText = await readStdin();
+  config.message = combineMessage(config.message, stdinText);
   const sess = resolveSessionId(argv);
   // Single source of truth for the id the driver injects (fixes double-generation).
   config.sessionId = sess.sessionId ?? "";
