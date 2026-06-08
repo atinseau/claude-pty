@@ -124,17 +124,28 @@ export interface DriverHooks {
   onTurnDone?: () => void;
 }
 
+export interface Session {
+  pty: IPty;
+  snapshot: () => string;
+}
+
 /**
  * Spawn the Claude Code TUI in a pty, inject config.message, and call hooks
  * when the prompt is ready and when the assistant turn completes.
  *
- * Returns the IPty so the caller can kill() it after onTurnDone fires.
+ * Returns a Session with the IPty and a snapshot() function for pty output.
  */
-export function startSession(config: Config, hooks: DriverHooks = {}): IPty {
-  // Build args: avoid duplicate --session-id if passthrough already contains it.
-  const args: string[] = config.passthrough.includes("--session-id")
-    ? [...config.passthrough]
-    : ["--session-id", config.sessionId, ...config.passthrough];
+export function startSession(config: Config, hooks: DriverHooks = {}): Session {
+  // Build args: skip --session-id injection when passthrough already has a
+  // session flag, or when --resume/--continue is in use, or sessionId is empty.
+  const hasSessionFlag =
+    config.passthrough.includes("--session-id") ||
+    config.passthrough.includes("--resume") || config.passthrough.includes("-r") ||
+    config.passthrough.includes("--continue") || config.passthrough.includes("-c");
+  const args: string[] =
+    config.sessionId && !hasSessionFlag
+      ? ["--session-id", config.sessionId, ...config.passthrough]
+      : [...config.passthrough];
 
   const pty: IPty = _ptySpawn(CLAUDE_BIN, args, {
     cols: 120,
@@ -151,9 +162,14 @@ export function startSession(config: Config, hooks: DriverHooks = {}): IPty {
   let turnDone = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
+  let outputLog = "";
+  const OUTPUT_CAP = 65536;
+
   pty.onData((data: string) => {
     buffer += data;
     if (buffer.length > BUFFER_CAP) buffer = buffer.slice(-BUFFER_CAP);
+    outputLog += data;
+    if (outputLog.length > OUTPUT_CAP) outputLog = outputLog.slice(-OUTPUT_CAP);
 
     if (!injected && isReady(buffer)) {
       // First time the prompt box appears — inject the user message.
@@ -182,5 +198,5 @@ export function startSession(config: Config, hooks: DriverHooks = {}): IPty {
     }
   });
 
-  return pty;
+  return { pty, snapshot: () => outputLog };
 }
