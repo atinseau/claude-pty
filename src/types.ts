@@ -35,4 +35,6 @@ export interface ResultObject {
   duration_ms: number;
   num_turns: number;
   is_error: boolean;
+  /** Present when is_error is true and the error was an API-level HTTP error (e.g. 401). Matches real `claude -p` shape. */
+  api_error_status?: number;
 }

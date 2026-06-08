@@ -25,3 +25,18 @@ test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("stream-json event types match c
   expect(types[types.length - 1]).toBe("result");
   expect(types).toContain("assistant");
 }, 60000);
+
+test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("bad API key yields non-zero exit + is_error", async () => {
+  // Use a short turn timeout so the process exits promptly when auth fails.
+  // The TUI may show an interactive "use this API key?" dialog; after the
+  // turn timeout expires, main.ts detects the error from the transcript/pty
+  // and exits non-zero.
+  const p = Bun.spawn(["bun", "run", "src/main.ts", "--output-format", "json", "hi"], {
+    env: { ...process.env, ANTHROPIC_API_KEY: "sk-bad-key", CLAUDE_PTY_TURN_TIMEOUT_MS: "20000" },
+  });
+  const out = await new Response(p.stdout).text();
+  const code = await p.exited;
+  expect(code).not.toBe(0);
+  // if a json result was produced, it must carry is_error
+  if (out.trim()) expect(JSON.parse(out.trim().split("\n").pop()!).is_error).toBe(true);
+}, 60000);

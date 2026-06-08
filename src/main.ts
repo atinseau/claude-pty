@@ -8,6 +8,7 @@ import { formatJson } from "./format/json";
 import { createStreamJsonEmitter } from "./format/streamjson";
 import { makeTranscriptCursor } from "./tailer";
 import { resolveSessionId, findTranscriptById, listTranscripts } from "./session";
+import { detectError } from "./errors";
 import { basename } from "path";
 import type { TranscriptEvent } from "./types";
 
@@ -73,11 +74,46 @@ async function main() {
   session.pty.kill();
 
   if (collected.length === 0) {
+    // Before giving up with a plain error message, check whether the PTY output
+    // contains a recognisable error banner (e.g. "Invalid API key").  If so,
+    // emit a faithful minimal error result object so the caller gets the same
+    // shape as a real `claude -p` error response, then exit 1.
+    const earlyVerdict = detectError([], session.snapshot());
+    if (earlyVerdict?.isError) {
+      const errResult = {
+        type: "result" as const,
+        subtype: earlyVerdict.subtype,
+        result: "",
+        session_id: effectiveId || "",
+        total_cost_usd: 0,
+        usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        duration_ms: 0,
+        num_turns: 0,
+        is_error: true,
+        ...(earlyVerdict.apiErrorStatus !== undefined ? { api_error_status: earlyVerdict.apiErrorStatus } : {}),
+      };
+      if (config.outputFormat === "text") {
+        // text mode: just signal the error on stderr
+        process.stderr.write(`error: ${earlyVerdict.subtype}${earlyVerdict.apiErrorStatus ? ` (${earlyVerdict.apiErrorStatus})` : ""}\n`);
+      } else {
+        process.stdout.write(formatJson(errResult) + "\n");
+      }
+      process.exit(1);
+    }
     process.stderr.write(`transcript not found or empty for session ${effectiveId || "(unknown)"}\n`);
     process.exit(1);
   }
 
   const result = reconstruct(collected, costOf, effectiveId);
+
+  // Apply error detection: override subtype/is_error if we can detect an error
+  // from the transcript events or PTY text.  This gives parity with `claude -p`.
+  const verdict = detectError(collected, session.snapshot());
+  if (verdict?.isError) {
+    result.is_error = true;
+    result.subtype = verdict.subtype;
+    if (verdict.apiErrorStatus !== undefined) result.api_error_status = verdict.apiErrorStatus;
+  }
 
   if (config.outputFormat === "text") {
     process.stdout.write(formatText(collected) + "\n");
