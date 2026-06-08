@@ -1,0 +1,30 @@
+// src/pricing.ts
+import type { Usage } from "./types";
+
+interface Price { input: number; output: number; cacheWrite: number; cacheRead: number }
+
+const TABLE: Record<string, Price> = {
+  "claude-opus-4-8":   { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  "claude-sonnet-4-6": { input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
+  "claude-haiku-4-5":  { input: 1,  output: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
+};
+
+function priceFor(model: string): Price | undefined {
+  if (TABLE[model]) return TABLE[model];
+  for (const key of Object.keys(TABLE)) {
+    const fam = key.split("-")[1];
+    if (fam && model.includes(fam)) return TABLE[key];
+  }
+  return undefined;
+}
+
+export function costOf(model: string, u: Usage): number {
+  const p = priceFor(model);
+  if (!p) return 0;
+  return (
+    (u.input_tokens / 1e6) * p.input +
+    (u.output_tokens / 1e6) * p.output +
+    (u.cache_creation_input_tokens / 1e6) * p.cacheWrite +
+    (u.cache_read_input_tokens / 1e6) * p.cacheRead
+  );
+}
