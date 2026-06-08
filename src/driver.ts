@@ -113,6 +113,35 @@ export function isReady(buffer: string): boolean {
   return buffer.includes("❯ ");
 }
 
+/**
+ * Detects the interactive permission-confirmation box.
+ *
+ * The dialog renders two reliable literal ASCII substrings (no NBSP):
+ *   "This command requires approval"  — row 26 of the permission box
+ *   "Do you want to proceed?"         — row 28 of the permission box
+ *
+ * Verified in docs/superpowers/findings/spike-B-permission.md (Claude Code
+ * 2.1.168, session 0a722727). Both strings appear in the same pty chunk
+ * (#154) so matching either one is sufficient.
+ *
+ * Exported for unit testing — keep this pure (no side-effects).
+ */
+export function isPermissionPrompt(buffer: string): boolean {
+  return (
+    buffer.includes("This command requires approval") ||
+    buffer.includes("Do you want to proceed?")
+  );
+}
+
+/**
+ * Keystroke that dismisses the permission box (ESC, single byte 0x1B).
+ *
+ * Verified in spike-B-permission.md: after sending ESC the dialog clears
+ * within ~100ms, the tool is NOT executed, and the assistant turn continues
+ * normally until the prompt-ready signal reappears.
+ */
+const DENY_KEYSTROKE = "";
+
 /** Rolling buffer cap in bytes — keeps memory bounded. */
 const BUFFER_CAP = 16384;
 
@@ -161,6 +190,8 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   let awaitingTurn = false;
   let turnDone = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  // Tracks the last permission box we denied — guards against re-firing on re-renders.
+  let lastDeniedBox = "";
 
   let outputLog = "";
   const OUTPUT_CAP = 65536;
@@ -182,6 +213,16 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
         awaitingTurn = true;
       }, 50);
       return;
+    }
+    // Auto-deny permission box (faithful to claude -p which denies tools outside --allowedTools).
+    // Fires once per unique box render: send ESC, which clears the dialog without executing the tool.
+    // The turn continues normally after dismissal and eventually fires onTurnDone via the prompt signal.
+    if (injected && isPermissionPrompt(buffer)) {
+      const marker = buffer.slice(-300);
+      if (marker !== lastDeniedBox) {
+        lastDeniedBox = marker;
+        ptyWrite(pty, DENY_KEYSTROKE);
+      }
     }
 
     if (awaitingTurn && !turnDone) {

@@ -40,3 +40,10 @@ test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("bad API key yields non-zero exi
   // if a json result was produced, it must carry is_error
   if (out.trim()) expect(JSON.parse(out.trim().split("\n").pop()!).is_error).toBe(true);
 }, 60000);
+
+test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("permission box is auto-denied; run terminates without hanging", async () => {
+  const p = Bun.spawn(["bun", "run", "src/main.ts", "--output-format", "text", "--permission-mode", "default", "Run the shell command: git status"], { env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "60000" } });
+  const out = await new Response(p.stdout).text();
+  const code = await p.exited;
+  expect(out.length).toBeGreaterThan(0); // produced a response, i.e. did not hang to timeout
+}, 90000);
