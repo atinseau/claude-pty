@@ -46,10 +46,22 @@
 // tool calls where the TUI briefly re-renders the prompt.
 
 import { createRequire } from "module";
+import { existsSync } from "fs";
 import type { Config } from "./cli";
 import type { IPty } from "node-pty";
 
-const _nodePtyPath = import.meta.dir + "/../node_modules/node-pty/lib/index.js";
+// node-pty must be loaded via createRequire (not a static import) so the
+// net.Socket patch below runs first. The createRequire base must point at a
+// real on-disk node-pty entry. Two deployment shapes need to work:
+//   - `bun run src/main.ts`  → node-pty is at <source>/../node_modules (import.meta.dir).
+//   - compiled `claude-pty.exe` → import.meta.dir is Bun's virtual B:\~BUN path,
+//     which has no node_modules; the binary resolves from the real CWD instead.
+// Try each candidate and use the first that exists on disk.
+const _nodePtyCandidates = [
+  import.meta.dir + "/../node_modules/node-pty/lib/index.js",
+  process.cwd() + "/node_modules/node-pty/lib/index.js",
+];
+const _nodePtyPath = _nodePtyCandidates.find((p) => existsSync(p)) ?? _nodePtyCandidates[0]!;
 const _require = createRequire(_nodePtyPath);
 
 // ─── Patch net.Socket to capture the conin fd (Windows Bun write fix) ────────
