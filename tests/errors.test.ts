@@ -103,3 +103,14 @@ test("multiple assistants, last end_turn real model → null", () => {
   const result = detectError(events, "❯ ");
   expect(result).toBeNull();
 });
+
+// ─── Case 11: synthetic-model auth wins over stale pty max-turns banner ────────
+// The transcript model field is the most reliable signal; a "Reached maximum
+// number of turns" string lingering in the cumulative pty scroll must not
+// misclassify a genuine auth failure.
+test("synthetic model takes precedence over stale pty max-turns text", () => {
+  const events: TranscriptEvent[] = [makeAssistant("<synthetic>", "stop_sequence")];
+  const result = detectError(events, "...Reached maximum number of turns (1)...");
+  expect(result!.subtype).toBe("success");
+  expect(result!.apiErrorStatus).toBe(401);
+});

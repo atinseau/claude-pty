@@ -95,6 +95,11 @@ async function main() {
       if (config.outputFormat === "text") {
         // text mode: just signal the error on stderr
         process.stderr.write(`error: ${earlyVerdict.subtype}${earlyVerdict.apiErrorStatus ? ` (${earlyVerdict.apiErrorStatus})` : ""}\n`);
+      } else if (config.outputFormat === "stream-json") {
+        // stream-json: emit system/init before the result, matching -p's ordering.
+        const em = createStreamJsonEmitter(effectiveId || "");
+        for (const line of em.flush()) process.stdout.write(line + "\n");
+        process.stdout.write(em.onResult(errResult) + "\n");
       } else {
         process.stdout.write(formatJson(errResult) + "\n");
       }

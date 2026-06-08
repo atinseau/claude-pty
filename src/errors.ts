@@ -37,31 +37,30 @@ export interface ErrorVerdict {
  * @returns ErrorVerdict when an error is detected, null for clean success.
  */
 export function detectError(events: TranscriptEvent[], ptyText: string): ErrorVerdict | null {
-  // ── PTY text signals (checked before transcript, so they work even when
-  //    events is empty — e.g. when auth fails before a transcript is written)
+  // ── Transcript signal first (most reliable, per Spike A's priority table).
+  //    The synthetic-model marker is an exact field on the message, immune to
+  //    the PTY scroll buffer carrying stale banners from earlier in the session.
+  const assistants = events.filter(
+    (e): e is Extract<TranscriptEvent, { kind: "assistant" }> => e.kind === "assistant",
+  );
+  const last = assistants[assistants.length - 1];
 
-  // Max-turns check: PTY banner "Reached maximum number of turns"
+  // Auth / API error: last assistant carries model "<synthetic>" — the CLI
+  // injects a synthetic message when the real API call was never made.
+  if (last && last.model === "<synthetic>") {
+    return { isError: true, subtype: "success", apiErrorStatus: 401 };
+  }
+
+  // ── PTY text signals (fallback; also the only signals available when the
+  //    events array is empty, e.g. auth fails before a transcript is written).
+
+  // Max-turns: PTY banner "Reached maximum number of turns"
   if (/Reached maximum number of turns/i.test(ptyText)) {
     return { isError: true, subtype: "error_max_turns" };
   }
 
   // Auth / API key error: PTY banner
   if (/Invalid API key|Please run \/login/i.test(ptyText)) {
-    return { isError: true, subtype: "success", apiErrorStatus: 401 };
-  }
-
-  // ── Transcript signals (reliable when a transcript was written)
-
-  const assistants = events.filter(
-    (e): e is Extract<TranscriptEvent, { kind: "assistant" }> => e.kind === "assistant",
-  );
-  const last = assistants[assistants.length - 1];
-
-  if (!last) return null;
-
-  // Auth / API error: last assistant carries model "<synthetic>" — the CLI
-  // injects a synthetic message when the real API call was never made.
-  if (last.model === "<synthetic>") {
     return { isError: true, subtype: "success", apiErrorStatus: 401 };
   }
 
