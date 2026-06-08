@@ -32,3 +32,24 @@ test("uses a provided --session-id instead of generating one", () => {
   expect(c.passthrough).toContain("--session-id");
   expect(c.passthrough).toContain("abc-123");
 });
+
+test("--continue does not consume the message", () => {
+  const c = parseArgs(["--continue", "what was the codeword"], () => "id");
+  expect(c.message).toBe("what was the codeword");
+  expect(c.passthrough).toContain("--continue");
+  expect(c.passthrough).not.toContain("what was the codeword");
+});
+test("-c (continue alias) does not consume the message", () => {
+  const c = parseArgs(["-c", "hello"], () => "id");
+  expect(c.message).toBe("hello");
+  expect(c.passthrough).toEqual(["-c"]);
+});
+test("--fork-session is boolean (does not eat the message)", () => {
+  const c = parseArgs(["--resume","sid","--fork-session","go"], () => "id");
+  expect(c.message).toBe("go");
+});
+test("value-taking flags still consume their value", () => {
+  const c = parseArgs(["--model","opus","hi"], () => "id");
+  expect(c.passthrough).toEqual(["--model","opus"]);
+  expect(c.message).toBe("hi");
+});

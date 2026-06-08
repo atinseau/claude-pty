@@ -43,6 +43,10 @@ export async function listTranscripts(cwd: string): Promise<string[]> {
   const dir = join(PROJECTS_ROOT, projectDirName(cwd));
   const glob = new Bun.Glob(`*.jsonl`);
   const out: string[] = [];
-  for await (const f of glob.scan({ cwd: dir, absolute: true })) out.push(f);
+  try {
+    for await (const f of glob.scan({ cwd: dir, absolute: true })) out.push(f);
+  } catch {
+    // Project dir doesn't exist yet (first session in this cwd) — return empty.
+  }
   return out;
 }

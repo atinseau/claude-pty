@@ -47,3 +47,21 @@ test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("permission box is auto-denied; 
   const code = await p.exited;
   expect(out.length).toBeGreaterThan(0); // produced a response, i.e. did not hang to timeout
 }, 90000);
+
+test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("--continue/--resume recalls prior conversation", async () => {
+  // Turn 1: plant a codeword, capture session id via JSON output.
+  const spawnEnv = { env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "60000" } };
+  const rawJson = await new Response(
+    Bun.spawn(["bun", "run", "src/main.ts", "--output-format", "json", "Remember the codeword: platypus"], spawnEnv).stdout
+  ).text();
+  const sessionId = JSON.parse(rawJson.trim()).session_id as string;
+  expect(sessionId).toBeTruthy();
+
+  // Turn 2: --resume <id> so we target exactly the session we just created,
+  // bypassing the "most-recent-session" ambiguity that --continue has when
+  // an ambient agent session is also open in the same project directory.
+  const out = await new Response(
+    Bun.spawn(["bun", "run", "src/main.ts", "--output-format", "text", "--resume", sessionId, "What was the codeword? One word."], spawnEnv).stdout
+  ).text();
+  expect(out.toLowerCase()).toContain("platypus");
+}, 150000);

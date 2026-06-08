@@ -10,6 +10,17 @@ export interface Config {
 const CONSUMED_WITH_VALUE = new Set(["--output-format", "--input-format", "--json-schema"]);
 const CONSUMED_BOOL = new Set(["-p", "--print", "--include-partial-messages", "--replay-user-messages"]);
 
+/** Passthrough flags that are boolean — they must NOT consume the following token as a value. */
+const PASSTHROUGH_BOOL = new Set([
+  "--continue", "-c",
+  "--fork-session",
+  "--no-session-persistence",
+  "--strict-mcp-config",
+  "--dangerously-skip-permissions",
+  "--allow-dangerously-skip-permissions",
+  "--ide",
+]);
+
 export function parseArgs(argv: string[], genId: () => string = () => crypto.randomUUID()): Config {
   let message = "";
   let outputFormat: Config["outputFormat"] = "text";
@@ -26,7 +37,7 @@ export function parseArgs(argv: string[], genId: () => string = () => crypto.ran
     if (a === "--session-id") { sessionId = argv[i + 1] ?? ""; passthrough.push(a, argv[++i]!); continue; }
     if (a.startsWith("-")) {
       passthrough.push(a);
-      if (i + 1 < argv.length && !argv[i + 1]!.startsWith("-")) passthrough.push(argv[++i]!);
+      if (!PASSTHROUGH_BOOL.has(a) && i + 1 < argv.length && !argv[i + 1]!.startsWith("-")) passthrough.push(argv[++i]!);
       continue;
     }
     message = a;

@@ -49,7 +49,7 @@ import { createRequire } from "module";
 import type { Config } from "./cli";
 import type { IPty } from "node-pty";
 
-const _nodePtyPath = process.cwd() + "/node_modules/node-pty/lib/index.js";
+const _nodePtyPath = import.meta.dir + "/../node_modules/node-pty/lib/index.js";
 const _require = createRequire(_nodePtyPath);
 
 // ─── Patch net.Socket to capture the conin fd (Windows Bun write fix) ────────
