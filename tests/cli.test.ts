@@ -53,3 +53,11 @@ test("value-taking flags still consume their value", () => {
   expect(c.passthrough).toEqual(["--model","opus"]);
   expect(c.message).toBe("hi");
 });
+
+test("--json-schema is forwarded to passthrough with its value", () => {
+  const schema = '{"type":"object"}';
+  const c = parseArgs(["--json-schema", schema, "set x to hi"], () => "id");
+  expect(c.passthrough).toContain("--json-schema");
+  expect(c.passthrough).toContain(schema);
+  expect(c.message).toBe("set x to hi");
+});

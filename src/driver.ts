@@ -175,6 +175,11 @@ export interface Session {
  * when the prompt is ready and when the assistant turn completes.
  *
  * Returns a Session with the IPty and a snapshot() function for pty output.
+ *
+ * Special case: when `--json-schema` is in passthrough, claude runs in `-p`
+ * (print/non-interactive) mode. The message is passed as a positional CLI arg
+ * instead of being injected via the TUI keyboard, and `onTurnDone` fires on
+ * process exit rather than on the TUI prompt signal.
  */
 export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   // Build args: skip --session-id injection when passthrough already has a
@@ -183,10 +188,24 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     config.passthrough.includes("--session-id") ||
     config.passthrough.includes("--resume") || config.passthrough.includes("-r") ||
     config.passthrough.includes("--continue") || config.passthrough.includes("-c");
-  const args: string[] =
+
+  // --json-schema forces claude into -p (print) mode: no interactive TUI.
+  // Pass the message as a positional CLI arg instead of injecting via keyboard.
+  const isPrintMode = config.passthrough.includes("--json-schema");
+
+  // In print mode we must pass --print explicitly (claude doesn't infer it
+  // from --json-schema alone when the TUI path is used) and include the
+  // message as a positional CLI arg rather than injecting it via the keyboard.
+  const basePassthrough = isPrintMode
+    ? ["--print", ...config.passthrough]
+    : config.passthrough;
+  const baseArgs: string[] =
     config.sessionId && !hasSessionFlag
-      ? ["--session-id", config.sessionId, ...config.passthrough]
-      : [...config.passthrough];
+      ? ["--session-id", config.sessionId, ...basePassthrough]
+      : [...basePassthrough];
+  const args: string[] = isPrintMode && config.message
+    ? [...baseArgs, config.message]
+    : baseArgs;
 
   const pty: IPty = _ptySpawn(CLAUDE_BIN, args, {
     cols: 120,
@@ -207,6 +226,23 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
 
   let outputLog = "";
   const OUTPUT_CAP = 65536;
+
+  // In -p (print) mode (e.g. --json-schema), claude exits immediately after
+  // writing the response. Fire onTurnDone on process exit since no TUI prompt
+  // signal will appear.
+  if (isPrintMode) {
+    pty.onData((data: string) => {
+      outputLog += data;
+      if (outputLog.length > OUTPUT_CAP) outputLog = outputLog.slice(-OUTPUT_CAP);
+    });
+    pty.onExit(() => {
+      if (!turnDone) {
+        turnDone = true;
+        hooks.onTurnDone?.();
+      }
+    });
+    return { pty, snapshot: () => outputLog };
+  }
 
   pty.onData((data: string) => {
     buffer += data;

@@ -7,7 +7,7 @@ export interface Config {
   passthrough: string[];
 }
 
-const CONSUMED_WITH_VALUE = new Set(["--output-format", "--input-format", "--json-schema"]);
+const CONSUMED_WITH_VALUE = new Set(["--output-format", "--input-format"]);
 const CONSUMED_BOOL = new Set(["-p", "--print", "--include-partial-messages", "--replay-user-messages"]);
 
 /** Passthrough flags that are boolean — they must NOT consume the following token as a value. */

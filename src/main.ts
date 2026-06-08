@@ -10,6 +10,7 @@ import { createStreamJsonEmitter } from "./format/streamjson";
 import { makeTranscriptCursor } from "./tailer";
 import { resolveSessionId, findTranscriptById, listTranscripts } from "./session";
 import { detectError } from "./errors";
+import { extractStructuredOutput } from "./structured";
 import { basename } from "path";
 import type { TranscriptEvent } from "./types";
 
@@ -52,6 +53,7 @@ async function main() {
   const deadline = Date.now() + TURN_TIMEOUT_MS;
   let path: string | null = null;
   let sawTerminal = false;
+  let lastText = "";
 
   while (Date.now() < deadline) {
     if (!path) {
@@ -60,6 +62,7 @@ async function main() {
     }
     if (path) {
       const text = await Bun.file(path).text();
+      lastText = text;
       const fresh = cursor.consume(text);
       for (const e of fresh) {
         collected.push(e);
@@ -122,6 +125,12 @@ async function main() {
     result.subtype = verdict.subtype;
     if (verdict.apiErrorStatus !== undefined) result.api_error_status = verdict.apiErrorStatus;
   }
+
+  // Extract structured output from the raw transcript when --json-schema was used.
+  // The attachment line is NOT surfaced by parseLine/parseTranscript, so we read
+  // directly from the raw transcript text rather than the parsed event stream.
+  const structured = extractStructuredOutput(lastText);
+  if (structured !== undefined) result.structured_output = structured;
 
   if (config.outputFormat === "text") {
     process.stdout.write(formatText(collected) + "\n");
