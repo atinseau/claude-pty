@@ -25,8 +25,8 @@
 import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { parseArgs } from "../src/cli";
-import { startSession } from "../src/driver";
+import { parseArgs } from "../src/cli/args";
+import { startSession } from "../src/pty/session";
 
 // ─── args ────────────────────────────────────────────────────────────────────
 const argv = Bun.argv.slice(2);

@@ -3,7 +3,7 @@
 // Produces a per-OS release archive for claude-pty.
 //
 // The compiled binary is NOT standalone: node-pty is a native module that is
-// not bundled into the executable. At runtime, src/driver.ts resolves node-pty
+// not bundled into the executable. At runtime, src/pty/runtime.ts resolves node-pty
 // from (among other places) `dirname(process.execPath)/node_modules/node-pty`.
 // Therefore a release archive must ship the binary alongside a
 // `node_modules/node-pty/` directory, trimmed to runtime-only files.
