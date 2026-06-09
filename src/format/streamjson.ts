@@ -61,6 +61,17 @@ export function createStreamJsonEmitter(sessionId: string) {
     return out;
   }
   return {
+    /**
+     * Emit `system/init` up-front (at TUI-ready), before any transcript event
+     * exists, so stream-json consumers see the session start ~immediately rather
+     * than only once the first assistant event arrives. `model` comes from the
+     * caller's `--model` flag when set, else "". Idempotent: a no-op once init
+     * has been emitted (here or lazily).
+     */
+    initEarly(model: string): string[] {
+      if (initEmitted) return [];
+      return flushBuffered(model);
+    },
     onEvent(e: TranscriptEvent): string[] {
       if (initEmitted) {
         const l = lineFor(e);

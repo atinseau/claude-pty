@@ -1,8 +1,24 @@
 // tests/cli.test.ts
 import { expect, test } from "bun:test";
-import { helpText, parseArgs } from "../src/cli";
+import { helpText, modelFlag, parseArgs } from "../src/cli";
 
 const fixedId = () => "fixed-uuid";
+
+// ─── modelFlag (used to populate the early stream-json init line) ──────────────
+
+test("modelFlag returns the --model value when present", () => {
+  expect(modelFlag(["--model", "claude-opus-4-8", "--verbose"])).toBe(
+    "claude-opus-4-8",
+  );
+});
+
+test("modelFlag returns empty string when --model is absent", () => {
+  expect(modelFlag(["--allowedTools", "Bash"])).toBe("");
+});
+
+test("modelFlag returns empty string when --model has no value", () => {
+  expect(modelFlag(["--model"])).toBe("");
+});
 
 // ─── --help / -h tests ────────────────────────────────────────────────────────
 
