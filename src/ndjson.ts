@@ -38,8 +38,11 @@ export function parseNdjsonMessages(text: string): string[] {
     } else if (Array.isArray(content)) {
       // Concatenate text blocks
       const text = (content as unknown[])
-        .filter((b): b is { type: string; text: string } =>
-          !!b && typeof b === "object" && (b as Record<string, unknown>)["type"] === "text"
+        .filter(
+          (b): b is { type: string; text: string } =>
+            !!b &&
+            typeof b === "object" &&
+            (b as Record<string, unknown>)["type"] === "text",
         )
         .map((b) => b.text)
         .join("");

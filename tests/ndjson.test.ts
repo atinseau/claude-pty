@@ -1,5 +1,5 @@
 // tests/ndjson.test.ts
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { parseNdjsonMessages } from "../src/ndjson";
 
 // ─── string content ───────────────────────────────────────────────────────────
@@ -10,7 +10,10 @@ test("parses user message with string content", () => {
 });
 
 test("parses user message with message.content string", () => {
-  const line = JSON.stringify({ type: "user", message: { role: "user", content: "Hi from message" } });
+  const line = JSON.stringify({
+    type: "user",
+    message: { role: "user", content: "Hi from message" },
+  });
   expect(parseNdjsonMessages(line)).toEqual(["Hi from message"]);
 });
 
@@ -32,9 +35,7 @@ test("parses user message with message.content array", () => {
     type: "user",
     message: {
       role: "user",
-      content: [
-        { type: "text", text: "Array via message" },
-      ],
+      content: [{ type: "text", text: "Array via message" }],
     },
   });
   expect(parseNdjsonMessages(line)).toEqual(["Array via message"]);
@@ -59,7 +60,11 @@ test("skips assistant lines", () => {
 });
 
 test("skips system lines", () => {
-  const line = JSON.stringify({ type: "system", subtype: "init", session_id: "abc" });
+  const line = JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: "abc",
+  });
   expect(parseNdjsonMessages(line)).toEqual([]);
 });
 
@@ -85,7 +90,10 @@ test("multiple user lines returns messages in order", () => {
     JSON.stringify({ type: "user", content: "First message" }),
     JSON.stringify({ type: "user", content: "Second message" }),
   ].join("\n");
-  expect(parseNdjsonMessages(lines)).toEqual(["First message", "Second message"]);
+  expect(parseNdjsonMessages(lines)).toEqual([
+    "First message",
+    "Second message",
+  ]);
 });
 
 test("mixed user and non-user lines: only user messages extracted", () => {
@@ -104,8 +112,11 @@ test("trailing newline is handled gracefully", () => {
 });
 
 test("windows CRLF line endings handled", () => {
-  const lines = JSON.stringify({ type: "user", content: "A" }) + "\r\n" +
-                JSON.stringify({ type: "user", content: "B" }) + "\r\n";
+  const lines =
+    JSON.stringify({ type: "user", content: "A" }) +
+    "\r\n" +
+    JSON.stringify({ type: "user", content: "B" }) +
+    "\r\n";
   expect(parseNdjsonMessages(lines)).toEqual(["A", "B"]);
 });
 

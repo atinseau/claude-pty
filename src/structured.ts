@@ -32,10 +32,23 @@ export function extractJson(text: string): unknown | undefined {
   let close: string;
 
   if (firstBrace === -1 && firstBracket === -1) return undefined;
-  if (firstBrace === -1) { start = firstBracket; open = "["; close = "]"; }
-  else if (firstBracket === -1) { start = firstBrace; open = "{"; close = "}"; }
-  else if (firstBrace < firstBracket) { start = firstBrace; open = "{"; close = "}"; }
-  else { start = firstBracket; open = "["; close = "]"; }
+  if (firstBrace === -1) {
+    start = firstBracket;
+    open = "[";
+    close = "]";
+  } else if (firstBracket === -1) {
+    start = firstBrace;
+    open = "{";
+    close = "}";
+  } else if (firstBrace < firstBracket) {
+    start = firstBrace;
+    open = "{";
+    close = "}";
+  } else {
+    start = firstBracket;
+    open = "[";
+    close = "]";
+  }
 
   // Walk forward tracking depth (respecting strings so braces inside strings
   // don't confuse the depth counter).
@@ -46,14 +59,26 @@ export function extractJson(text: string): unknown | undefined {
 
   for (let i = start; i < s.length; i++) {
     const ch = s[i]!;
-    if (escaped) { escaped = false; continue; }
-    if (ch === "\\" && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === open) depth++;
     else if (ch === close) {
       depth--;
-      if (depth === 0) { end = i; break; }
+      if (depth === 0) {
+        end = i;
+        break;
+      }
     }
   }
 
@@ -104,7 +129,10 @@ export function validateAgainstSchema(value: unknown, schema: object): boolean {
   if (schemaType === "object" && value !== null && typeof value === "object") {
     const obj = value as Record<string, unknown>;
     const required = (s["required"] as string[] | undefined) ?? [];
-    const properties = (s["properties"] as Record<string, Record<string, unknown>> | undefined) ?? {};
+    const properties =
+      (s["properties"] as
+        | Record<string, Record<string, unknown>>
+        | undefined) ?? {};
 
     // All required keys must be present.
     for (const key of required) {

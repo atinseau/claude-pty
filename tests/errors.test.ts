@@ -1,15 +1,23 @@
 // tests/errors.test.ts
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { detectError } from "../src/errors";
 import type { TranscriptEvent } from "../src/types";
 
 // Helpers to build minimal TranscriptEvent objects
-function makeAssistant(model: string, stop_reason: string | null): Extract<TranscriptEvent, { kind: "assistant" }> {
+function makeAssistant(
+  model: string,
+  stop_reason: string | null,
+): Extract<TranscriptEvent, { kind: "assistant" }> {
   return {
     kind: "assistant",
     model,
     content: [{ type: "text", text: "some text" }],
-    usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
     stop_reason,
     timestamp: "2026-06-08T00:00:00Z",
     uuid: "test-uuid",
@@ -18,14 +26,18 @@ function makeAssistant(model: string, stop_reason: string | null): Extract<Trans
 
 // ─── Case 1: Normal end_turn → null (no error) ───────────────────────────────
 test("normal end_turn returns null", () => {
-  const events: TranscriptEvent[] = [makeAssistant("claude-opus-4-8", "end_turn")];
+  const events: TranscriptEvent[] = [
+    makeAssistant("claude-opus-4-8", "end_turn"),
+  ];
   const result = detectError(events, "❯ ");
   expect(result).toBeNull();
 });
 
 // ─── Case 2: Synthetic model → auth error verdict ────────────────────────────
 test("last assistant model=<synthetic> → auth error verdict", () => {
-  const events: TranscriptEvent[] = [makeAssistant("<synthetic>", "stop_sequence")];
+  const events: TranscriptEvent[] = [
+    makeAssistant("<synthetic>", "stop_sequence"),
+  ];
   const result = detectError(events, "Invalid API key · Fix external API key");
   expect(result).not.toBeNull();
   expect(result!.isError).toBe(true);
@@ -53,7 +65,9 @@ test("pty 'Please run /login' → auth error verdict", () => {
 
 // ─── Case 5: PTY text "Reached maximum number of turns" → error_max_turns ────
 test("pty 'Reached maximum number of turns' → error_max_turns verdict", () => {
-  const events: TranscriptEvent[] = [makeAssistant("claude-opus-4-8", "tool_use")];
+  const events: TranscriptEvent[] = [
+    makeAssistant("claude-opus-4-8", "tool_use"),
+  ];
   const result = detectError(events, "Reached maximum number of turns (1)");
   expect(result).not.toBeNull();
   expect(result!.isError).toBe(true);
@@ -80,7 +94,9 @@ test("refusal (end_turn, real model) returns null — not detectable", () => {
 
 // ─── Case 8: Auth error — synthetic model without PTY text ────────────────────
 test("synthetic model alone (empty pty) → auth error verdict", () => {
-  const events: TranscriptEvent[] = [makeAssistant("<synthetic>", "stop_sequence")];
+  const events: TranscriptEvent[] = [
+    makeAssistant("<synthetic>", "stop_sequence"),
+  ];
   const result = detectError(events, "");
   expect(result).not.toBeNull();
   expect(result!.isError).toBe(true);
@@ -109,8 +125,13 @@ test("multiple assistants, last end_turn real model → null", () => {
 // number of turns" string lingering in the cumulative pty scroll must not
 // misclassify a genuine auth failure.
 test("synthetic model takes precedence over stale pty max-turns text", () => {
-  const events: TranscriptEvent[] = [makeAssistant("<synthetic>", "stop_sequence")];
-  const result = detectError(events, "...Reached maximum number of turns (1)...");
+  const events: TranscriptEvent[] = [
+    makeAssistant("<synthetic>", "stop_sequence"),
+  ];
+  const result = detectError(
+    events,
+    "...Reached maximum number of turns (1)...",
+  );
   expect(result!.subtype).toBe("success");
   expect(result!.apiErrorStatus).toBe(401);
 });

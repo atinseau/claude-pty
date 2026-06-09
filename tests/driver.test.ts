@@ -14,7 +14,7 @@
 // Using "❯ " (with a visually identical ASCII space) would make these tests
 // silently wrong if the editor normalises the character.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { isReady } from "../src/driver";
 
 // Prompt signal: ❯ (U+276F) + U+00A0 (non-breaking space)
@@ -28,7 +28,9 @@ test("isReady: startup frame contains prompt signal and returns true", () => {
   const startupChunk =
     "[38;2;136;136;136m\r\n" +
     "────────────────────────────────────────────────────────────────\r\n" +
-    "[m" + PROMPT + "[2mTry \"how does <filepath> work?\"" +
+    "[m" +
+    PROMPT +
+    '[2mTry "how does <filepath> work?"' +
     "[38;2;136;136;136m[22m\r\n" +
     "────────────────────────────────────────────────────────────────";
   expect(isReady(startupChunk)).toBe(true);
@@ -39,7 +41,8 @@ test("isReady: post-turn frame with prompt signal at row 38 col 1 returns true",
   // ESC[38;1H positions cursor to row 38 col 1; then ❯  is printed.
   const postTurnChunk =
     "[?25l[38;2;153;153;153m[20;1H✳[1CCrunched for 1s" +
-    "[m[35;1H[K[38;1H" + PROMPT +
+    "[m[35;1H[K[38;1H" +
+    PROMPT +
     "[38;2;153;153;153m[40;51H← for agents[K[38;3H[?25h";
   expect(isReady(postTurnChunk)).toBe(true);
 });
@@ -63,9 +66,7 @@ test("isReady: spinner-only chunk during processing returns false", () => {
 
 test("isReady: ANSI screen-clear chunk at startup returns false", () => {
   // From calibration chunk #6 (screen clear lines, no prompt yet).
-  const clearChunk =
-    "[K\r\n[K\r\n[K\r\n[K\r\n" +
-    "[K\r\n[K\r\n[K\r\n[K[120C";
+  const clearChunk = "[K\r\n[K\r\n[K\r\n[K\r\n" + "[K\r\n[K\r\n[K\r\n[K[120C";
   expect(isReady(clearChunk)).toBe(false);
 });
 
@@ -77,7 +78,7 @@ test("isReady: prompt char without trailing NBSP is not a match", () => {
   // ❯ followed by regular ASCII space (0x20) should NOT match —
   // the real signal requires U+00A0 after ❯, not U+0020.
   expect(isReady("]0;❯Claude Code")).toBe(false);
-  expect(isReady("❯ ")).toBe(false);  // ASCII space — not a match
+  expect(isReady("❯ ")).toBe(false); // ASCII space — not a match
 });
 
 test("isReady: partial escape sequence without prompt signal returns false", () => {

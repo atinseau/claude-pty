@@ -36,12 +36,16 @@ export interface ErrorVerdict {
  * @param ptyText Accumulated raw PTY output (the session snapshot).
  * @returns ErrorVerdict when an error is detected, null for clean success.
  */
-export function detectError(events: TranscriptEvent[], ptyText: string): ErrorVerdict | null {
+export function detectError(
+  events: TranscriptEvent[],
+  ptyText: string,
+): ErrorVerdict | null {
   // ── Transcript signal first (most reliable, per Spike A's priority table).
   //    The synthetic-model marker is an exact field on the message, immune to
   //    the PTY scroll buffer carrying stale banners from earlier in the session.
   const assistants = events.filter(
-    (e): e is Extract<TranscriptEvent, { kind: "assistant" }> => e.kind === "assistant",
+    (e): e is Extract<TranscriptEvent, { kind: "assistant" }> =>
+      e.kind === "assistant",
   );
   const last = assistants[assistants.length - 1];
 

@@ -1,5 +1,5 @@
 // tests/pricing.test.ts
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { costOf } from "../src/pricing";
 
 test("opus cost = input + output + cache, per million tokens", () => {
@@ -13,8 +13,12 @@ test("opus cost = input + output + cache, per million tokens", () => {
 });
 
 test("unknown model falls back to zero cost without throwing", () => {
-  expect(costOf("made-up-model", {
-    input_tokens: 1000, output_tokens: 1000,
-    cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
-  })).toBe(0);
+  expect(
+    costOf("made-up-model", {
+      input_tokens: 1000,
+      output_tokens: 1000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    }),
+  ).toBe(0);
 });

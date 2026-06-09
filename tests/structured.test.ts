@@ -1,5 +1,5 @@
 // tests/structured.test.ts
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { extractJson, validateAgainstSchema } from "../src/structured";
 
 // ─── extractJson ─────────────────────────────────────────────────────────────
@@ -9,21 +9,21 @@ test("extracts plain JSON object", () => {
 });
 
 test("extracts plain JSON array", () => {
-  expect(extractJson('[1,2,3]')).toEqual([1, 2, 3]);
+  expect(extractJson("[1,2,3]")).toEqual([1, 2, 3]);
 });
 
 test("extracts JSON from fenced code block (```json ... ```)", () => {
-  const text = "```json\n{\"x\":\"hi\"}\n```";
+  const text = '```json\n{"x":"hi"}\n```';
   expect(extractJson(text)).toEqual({ x: "hi" });
 });
 
 test("extracts JSON from plain fenced code block (``` ... ```)", () => {
-  const text = "```\n{\"x\":\"hi\"}\n```";
+  const text = '```\n{"x":"hi"}\n```';
   expect(extractJson(text)).toEqual({ x: "hi" });
 });
 
 test("extracts JSON embedded in prose", () => {
-  const text = "Here is the result:\n{\"x\":\"hi\"}\nHope that helps!";
+  const text = 'Here is the result:\n{"x":"hi"}\nHope that helps!';
   expect(extractJson(text)).toEqual({ x: "hi" });
 });
 
@@ -51,17 +51,29 @@ test("strips leading/trailing whitespace before parsing", () => {
 // ─── validateAgainstSchema ────────────────────────────────────────────────────
 
 test("validates conforming object (required keys present, correct types)", () => {
-  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  const schema = {
+    type: "object",
+    properties: { x: { type: "string" } },
+    required: ["x"],
+  };
   expect(validateAgainstSchema({ x: "hi" }, schema)).toBe(true);
 });
 
 test("rejects object missing required key", () => {
-  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  const schema = {
+    type: "object",
+    properties: { x: { type: "string" } },
+    required: ["x"],
+  };
   expect(validateAgainstSchema({}, schema)).toBe(false);
 });
 
 test("rejects object with wrong type for property", () => {
-  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  const schema = {
+    type: "object",
+    properties: { x: { type: "string" } },
+    required: ["x"],
+  };
   expect(validateAgainstSchema({ x: 42 }, schema)).toBe(false);
 });
 
@@ -100,24 +112,45 @@ test("schema with no type constraint: any value passes", () => {
 });
 
 test("object with extra properties beyond required: still valid", () => {
-  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  const schema = {
+    type: "object",
+    properties: { x: { type: "string" } },
+    required: ["x"],
+  };
   expect(validateAgainstSchema({ x: "hi", y: 99 }, schema)).toBe(true);
 });
 
 // ─── integer vs number (JSON Schema distinguishes them; JS typeof does not) ───
 
 test("integer type accepts a whole number", () => {
-  const schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] };
+  const schema = {
+    type: "object",
+    properties: { count: { type: "integer" } },
+    required: ["count"],
+  };
   expect(validateAgainstSchema({ count: 3 }, schema)).toBe(true);
 });
 
 test("integer type rejects a non-whole number", () => {
-  const schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] };
+  const schema = {
+    type: "object",
+    properties: { count: { type: "integer" } },
+    required: ["count"],
+  };
   expect(validateAgainstSchema({ count: 3.5 }, schema)).toBe(false);
 });
 
 test("number type accepts a float", () => {
-  expect(validateAgainstSchema({ n: 3.5 }, { type: "object", properties: { n: { type: "number" } }, required: ["n"] })).toBe(true);
+  expect(
+    validateAgainstSchema(
+      { n: 3.5 },
+      {
+        type: "object",
+        properties: { n: { type: "number" } },
+        required: ["n"],
+      },
+    ),
+  ).toBe(true);
 });
 
 test("top-level integer type matches", () => {

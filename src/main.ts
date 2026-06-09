@@ -1,25 +1,34 @@
 // src/main.ts
+
+import { basename } from "path";
 import { parseArgs } from "./cli";
-import { combineMessage, readStdin } from "./stdin";
 import { startSession } from "./driver";
-import { parseNdjsonMessages } from "./ndjson";
-import { reconstruct } from "./reconstruct";
-import { costOf } from "./pricing";
-import { formatText } from "./format/text";
+import { detectError } from "./errors";
 import { formatJson } from "./format/json";
 import { createStreamJsonEmitter } from "./format/streamjson";
-import { makeTranscriptCursor } from "./tailer";
-import { resolveSessionId, findTranscriptById, listTranscripts } from "./session";
-import { detectError } from "./errors";
+import { formatText } from "./format/text";
+import { parseNdjsonMessages } from "./ndjson";
+import { costOf } from "./pricing";
+import { reconstruct } from "./reconstruct";
+import {
+  findTranscriptById,
+  listTranscripts,
+  resolveSessionId,
+} from "./session";
+import { combineMessage, readStdin } from "./stdin";
 import { extractJson, validateAgainstSchema } from "./structured";
-import { basename } from "path";
+import { makeTranscriptCursor } from "./tailer";
 import type { TranscriptEvent } from "./types";
 
-const TURN_TIMEOUT_MS = Number(process.env.CLAUDE_PTY_TURN_TIMEOUT_MS) || 600_000;
+const TURN_TIMEOUT_MS =
+  Number(process.env.CLAUDE_PTY_TURN_TIMEOUT_MS) || 600_000;
 const POLL_MS = 120;
 
 function isTerminal(events: TranscriptEvent[]): boolean {
-  const a = events.filter((e): e is Extract<TranscriptEvent, { kind: "assistant" }> => e.kind === "assistant");
+  const a = events.filter(
+    (e): e is Extract<TranscriptEvent, { kind: "assistant" }> =>
+      e.kind === "assistant",
+  );
   const last = a[a.length - 1];
   return !!last && last.stop_reason !== "tool_use" && last.stop_reason !== null;
 }
@@ -51,7 +60,10 @@ async function main() {
 
   // --continue always forks a NEW transcript file (Spike C): snapshot before spawn
   // so we can detect the newly-appeared file to tail.
-  const preExisting = sess.mode === "continue" ? new Set(await listTranscripts(process.cwd())) : null;
+  const preExisting =
+    sess.mode === "continue"
+      ? new Set(await listTranscripts(process.cwd()))
+      : null;
 
   const cursor = makeTranscriptCursor();
   const collected: TranscriptEvent[] = [];
@@ -59,7 +71,11 @@ async function main() {
   let effectiveId = sess.sessionId ?? "";
 
   let ptyDone = false;
-  const session = startSession(config, { onTurnDone: () => { ptyDone = true; } });
+  const session = startSession(config, {
+    onTurnDone: () => {
+      ptyDone = true;
+    },
+  });
 
   async function locate(): Promise<string | null> {
     if (sess.sessionId) return findTranscriptById(sess.sessionId);
@@ -91,7 +107,8 @@ async function main() {
             collected.push(e);
             if (config.outputFormat === "stream-json") {
               if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
-              for (const line of emitter.onEvent(e)) process.stdout.write(line + "\n");
+              for (const line of emitter.onEvent(e))
+                process.stdout.write(line + "\n");
             }
           }
           sawTerminal = isTerminal(collected);
@@ -117,8 +134,10 @@ async function main() {
     const deadlineGuard = new Promise<void>((resolve) =>
       setTimeout(resolve, Math.max(0, deadline - Date.now())),
     );
-    await Promise.race([Promise.all([injectMessages(), pollLoop()]), deadlineGuard]);
-
+    await Promise.race([
+      Promise.all([injectMessages(), pollLoop()]),
+      deadlineGuard,
+    ]);
   } else {
     // ─── Single-turn path (unchanged) ──────────────────────────────────────────
     while (Date.now() < deadline) {
@@ -133,7 +152,8 @@ async function main() {
           collected.push(e);
           if (config.outputFormat === "stream-json") {
             if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
-            for (const line of emitter.onEvent(e)) process.stdout.write(line + "\n");
+            for (const line of emitter.onEvent(e))
+              process.stdout.write(line + "\n");
           }
         }
         sawTerminal = isTerminal(collected);
@@ -158,15 +178,24 @@ async function main() {
         result: "",
         session_id: effectiveId || "",
         total_cost_usd: 0,
-        usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
         duration_ms: 0,
         num_turns: 0,
         is_error: true,
-        ...(earlyVerdict.apiErrorStatus !== undefined ? { api_error_status: earlyVerdict.apiErrorStatus } : {}),
+        ...(earlyVerdict.apiErrorStatus !== undefined
+          ? { api_error_status: earlyVerdict.apiErrorStatus }
+          : {}),
       };
       if (config.outputFormat === "text") {
         // text mode: just signal the error on stderr
-        process.stderr.write(`error: ${earlyVerdict.subtype}${earlyVerdict.apiErrorStatus ? ` (${earlyVerdict.apiErrorStatus})` : ""}\n`);
+        process.stderr.write(
+          `error: ${earlyVerdict.subtype}${earlyVerdict.apiErrorStatus ? ` (${earlyVerdict.apiErrorStatus})` : ""}\n`,
+        );
       } else if (config.outputFormat === "stream-json") {
         // stream-json: emit system/init before the result, matching -p's ordering.
         const em = createStreamJsonEmitter(effectiveId || "");
@@ -177,7 +206,9 @@ async function main() {
       }
       process.exit(1);
     }
-    process.stderr.write(`transcript not found or empty for session ${effectiveId || "(unknown)"}\n`);
+    process.stderr.write(
+      `transcript not found or empty for session ${effectiveId || "(unknown)"}\n`,
+    );
     process.exit(1);
   }
 
@@ -189,7 +220,8 @@ async function main() {
   if (verdict?.isError) {
     result.is_error = true;
     result.subtype = verdict.subtype;
-    if (verdict.apiErrorStatus !== undefined) result.api_error_status = verdict.apiErrorStatus;
+    if (verdict.apiErrorStatus !== undefined)
+      result.api_error_status = verdict.apiErrorStatus;
   }
 
   // Extract and validate structured output when --json-schema was used.
@@ -205,7 +237,10 @@ async function main() {
   // impossible schemas: minLength>maxLength and minimum>maximum.)
   if (config.jsonSchema) {
     const parsed = extractJson(formatText(collected));
-    if (parsed !== undefined && validateAgainstSchema(parsed, JSON.parse(config.jsonSchema))) {
+    if (
+      parsed !== undefined &&
+      validateAgainstSchema(parsed, JSON.parse(config.jsonSchema))
+    ) {
       result.structured_output = parsed;
     } else {
       result.is_error = true;

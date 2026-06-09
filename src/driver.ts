@@ -45,10 +45,10 @@
 // TURN_DONE_DEBOUNCE_MS (800 ms). This debounce prevents false fires between
 // tool calls where the TUI briefly re-renders the prompt.
 
-import { createRequire } from "module";
 import { existsSync } from "fs";
-import type { Config } from "./cli";
+import { createRequire } from "module";
 import type { IPty } from "node-pty";
+import type { Config } from "./cli";
 
 // node-pty must be loaded via createRequire (not a static import) so the
 // net.Socket patch below runs first. The createRequire base must point at a
@@ -61,7 +61,8 @@ const _nodePtyCandidates = [
   import.meta.dir + "/../node_modules/node-pty/lib/index.js",
   process.cwd() + "/node_modules/node-pty/lib/index.js",
 ];
-const _nodePtyPath = _nodePtyCandidates.find((p) => existsSync(p)) ?? _nodePtyCandidates[0]!;
+const _nodePtyPath =
+  _nodePtyCandidates.find((p) => existsSync(p)) ?? _nodePtyCandidates[0]!;
 const _require = createRequire(_nodePtyPath);
 
 // ─── Patch net.Socket to capture the conin fd (Windows Bun write fix) ────────
@@ -70,9 +71,11 @@ let _coninFd: number | null = null;
 if (process.platform === "win32") {
   const net = _require("net");
   const OrigSocket = net.Socket;
-  net.Socket = function PatchedSocket(
-    opts?: { fd?: number; readable?: boolean; writable?: boolean },
-  ) {
+  net.Socket = function PatchedSocket(opts?: {
+    fd?: number;
+    readable?: boolean;
+    writable?: boolean;
+  }) {
     if (
       opts &&
       typeof opts.fd === "number" &&
@@ -87,7 +90,9 @@ if (process.platform === "win32") {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-const { spawn: _ptySpawn } = _require("./index.js") as typeof import("node-pty");
+const { spawn: _ptySpawn } = _require(
+  "./index.js",
+) as typeof import("node-pty");
 const { writeSync: _fsWriteSync } = _require("fs") as typeof import("fs");
 
 /** Write to the pty — uses fs.writeSync on Windows due to Bun net.Socket bug. */
@@ -152,7 +157,7 @@ export function isPermissionPrompt(buffer: string): boolean {
  * within ~100ms, the tool is NOT executed, and the assistant turn continues
  * normally until the prompt-ready signal reappears.
  */
-export const DENY_KEYSTROKE ="";
+export const DENY_KEYSTROKE = "";
 
 /** Rolling buffer cap in bytes — keeps memory bounded. */
 const BUFFER_CAP = 16384;
@@ -200,8 +205,10 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   // session flag, or when --resume/--continue is in use, or sessionId is empty.
   const hasSessionFlag =
     config.passthrough.includes("--session-id") ||
-    config.passthrough.includes("--resume") || config.passthrough.includes("-r") ||
-    config.passthrough.includes("--continue") || config.passthrough.includes("-c");
+    config.passthrough.includes("--resume") ||
+    config.passthrough.includes("-r") ||
+    config.passthrough.includes("--continue") ||
+    config.passthrough.includes("-c");
 
   const args: string[] =
     config.sessionId && !hasSessionFlag
@@ -230,7 +237,9 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
 
   // ─── Ready promise (resolves when TUI prompt first appears) ──────────────
   let _readyResolve: (() => void) | null = null;
-  const readyPromise = new Promise<void>((resolve) => { _readyResolve = resolve; });
+  const readyPromise = new Promise<void>((resolve) => {
+    _readyResolve = resolve;
+  });
 
   // ─── Per-turn send() resolver (multi-turn mode) ───────────────────────────
   let _sendResolve: (() => void) | null = null;
@@ -296,7 +305,9 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
    */
   function send(message: string): Promise<void> {
     if (awaitingTurn && !turnDone) {
-      return Promise.reject(new Error("send() called while a turn is already in progress"));
+      return Promise.reject(
+        new Error("send() called while a turn is already in progress"),
+      );
     }
     return new Promise<void>((resolve) => {
       _sendResolve = resolve;

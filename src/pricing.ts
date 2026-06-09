@@ -1,12 +1,27 @@
 // src/pricing.ts
 import type { Usage } from "./types";
 
-interface Price { input: number; output: number; cacheWrite: number; cacheRead: number }
+interface Price {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+}
 
 const TABLE: Record<string, Price> = {
-  "claude-opus-4-8":   { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
-  "claude-sonnet-4-6": { input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
-  "claude-haiku-4-5":  { input: 1,  output: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
+  "claude-opus-4-8": {
+    input: 15,
+    output: 75,
+    cacheWrite: 18.75,
+    cacheRead: 1.5,
+  },
+  "claude-sonnet-4-6": {
+    input: 3,
+    output: 15,
+    cacheWrite: 3.75,
+    cacheRead: 0.3,
+  },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
 };
 
 function priceFor(model: string): Price | undefined {

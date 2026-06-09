@@ -1,5 +1,5 @@
 // tests/cli.test.ts
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { parseArgs } from "../src/cli";
 
 const fixedId = () => "fixed-uuid";
@@ -20,16 +20,28 @@ test("consumes --output-format, never forwarding it", () => {
 });
 
 test("--print throws an error (claude-pty replaces -p)", () => {
-  expect(() => parseArgs(["--print", "hi"], fixedId)).toThrow("--print/-p flag is not supported");
+  expect(() => parseArgs(["--print", "hi"], fixedId)).toThrow(
+    "--print/-p flag is not supported",
+  );
 });
 
 test("-p throws an error (claude-pty replaces -p)", () => {
-  expect(() => parseArgs(["-p", "hi"], fixedId)).toThrow("--print/-p flag is not supported");
+  expect(() => parseArgs(["-p", "hi"], fixedId)).toThrow(
+    "--print/-p flag is not supported",
+  );
 });
 
 test("forwards unknown flags with their values as passthrough", () => {
-  const c = parseArgs(["--model", "opus", "--allowedTools", "Read,Edit", "do it"], fixedId);
-  expect(c.passthrough).toEqual(["--model", "opus", "--allowedTools", "Read,Edit"]);
+  const c = parseArgs(
+    ["--model", "opus", "--allowedTools", "Read,Edit", "do it"],
+    fixedId,
+  );
+  expect(c.passthrough).toEqual([
+    "--model",
+    "opus",
+    "--allowedTools",
+    "Read,Edit",
+  ]);
   expect(c.message).toBe("do it");
 });
 
@@ -52,19 +64,20 @@ test("-c (continue alias) does not consume the message", () => {
   expect(c.passthrough).toEqual(["-c"]);
 });
 test("--fork-session is boolean (does not eat the message)", () => {
-  const c = parseArgs(["--resume","sid","--fork-session","go"], () => "id");
+  const c = parseArgs(["--resume", "sid", "--fork-session", "go"], () => "id");
   expect(c.message).toBe("go");
 });
 test("value-taking flags still consume their value", () => {
-  const c = parseArgs(["--model","opus","hi"], () => "id");
-  expect(c.passthrough).toEqual(["--model","opus"]);
+  const c = parseArgs(["--model", "opus", "hi"], () => "id");
+  expect(c.passthrough).toEqual(["--model", "opus"]);
   expect(c.message).toBe("hi");
 });
 
 // ─── --json-schema tests ──────────────────────────────────────────────────────
 
 test("--json-schema is captured into config.jsonSchema and NOT in passthrough", () => {
-  const schema = '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
+  const schema =
+    '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
   const c = parseArgs(["--json-schema", schema, "set x to hi"], fixedId);
   expect(c.jsonSchema).toBe(schema);
   expect(c.passthrough).not.toContain("--json-schema");
@@ -73,7 +86,8 @@ test("--json-schema is captured into config.jsonSchema and NOT in passthrough", 
 });
 
 test("--json-schema without user system prompt: passthrough has --system-prompt with schema instruction", () => {
-  const schema = '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
+  const schema =
+    '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
   const c = parseArgs(["--json-schema", schema, "go"], fixedId);
   const spIdx = c.passthrough.indexOf("--system-prompt");
   expect(spIdx).toBeGreaterThanOrEqual(0);
@@ -92,7 +106,10 @@ test("--system-prompt without --json-schema: passthrough has --system-prompt unc
 
 test("--system-prompt + --json-schema: passthrough --system-prompt merges both", () => {
   const schema = '{"type":"object"}';
-  const c = parseArgs(["--system-prompt", "Be terse.", "--json-schema", schema, "go"], fixedId);
+  const c = parseArgs(
+    ["--system-prompt", "Be terse.", "--json-schema", schema, "go"],
+    fixedId,
+  );
   expect(c.systemPrompt).toBe("Be terse.");
   expect(c.jsonSchema).toBe(schema);
   const spIdx = c.passthrough.indexOf("--system-prompt");
@@ -102,19 +119,25 @@ test("--system-prompt + --json-schema: passthrough --system-prompt merges both",
   expect(spValue).toContain("Be terse.");
   expect(spValue).toContain(schema);
   // only ONE --system-prompt in passthrough
-  const count = c.passthrough.filter(v => v === "--system-prompt").length;
+  const count = c.passthrough.filter((v) => v === "--system-prompt").length;
   expect(count).toBe(1);
 });
 
 test("--append-system-prompt always passes through untouched", () => {
-  const c = parseArgs(["--append-system-prompt", "Always end with DONE.", "hi"], fixedId);
+  const c = parseArgs(
+    ["--append-system-prompt", "Always end with DONE.", "hi"],
+    fixedId,
+  );
   expect(c.passthrough).toContain("--append-system-prompt");
   expect(c.passthrough).toContain("Always end with DONE.");
 });
 
 test("--append-system-prompt passes through even when --json-schema present", () => {
   const schema = '{"type":"object"}';
-  const c = parseArgs(["--append-system-prompt", "extra.", "--json-schema", schema, "go"], fixedId);
+  const c = parseArgs(
+    ["--append-system-prompt", "extra.", "--json-schema", schema, "go"],
+    fixedId,
+  );
   expect(c.passthrough).toContain("--append-system-prompt");
   expect(c.passthrough).toContain("extra.");
 });

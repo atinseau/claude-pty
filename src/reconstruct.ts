@@ -1,10 +1,13 @@
 // src/reconstruct.ts
-import type { TranscriptEvent, ResultObject, Usage } from "./types";
+import type { ResultObject, TranscriptEvent, Usage } from "./types";
 
 type CostFn = (model: string, usage: Usage) => number;
 
 function textOf(content: { type: string; text?: string }[]): string {
-  return content.filter(c => c.type === "text").map(c => c.text ?? "").join("");
+  return content
+    .filter((c) => c.type === "text")
+    .map((c) => c.text ?? "")
+    .join("");
 }
 
 export function reconstruct(
@@ -12,9 +15,17 @@ export function reconstruct(
   costFn: CostFn,
   sessionId: string,
 ): ResultObject {
-  const assistants = events.filter(e => e.kind === "assistant") as Extract<TranscriptEvent, { kind: "assistant" }>[];
+  const assistants = events.filter((e) => e.kind === "assistant") as Extract<
+    TranscriptEvent,
+    { kind: "assistant" }
+  >[];
 
-  const usage: Usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const usage: Usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+  };
   let cost = 0;
   for (const a of assistants) {
     usage.input_tokens += a.usage.input_tokens;
@@ -27,8 +38,13 @@ export function reconstruct(
   const last = assistants[assistants.length - 1];
   const result = last ? textOf(last.content as any) : "";
 
-  const times = events.map(e => (e.kind === "ignored" ? "" : e.timestamp)).filter(Boolean).map(t => Date.parse(t)).filter(n => !Number.isNaN(n));
-  const duration_ms = times.length >= 2 ? Math.max(...times) - Math.min(...times) : 0;
+  const times = events
+    .map((e) => (e.kind === "ignored" ? "" : e.timestamp))
+    .filter(Boolean)
+    .map((t) => Date.parse(t))
+    .filter((n) => !Number.isNaN(n));
+  const duration_ms =
+    times.length >= 2 ? Math.max(...times) - Math.min(...times) : 0;
 
   return {
     type: "result",

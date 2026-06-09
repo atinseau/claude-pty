@@ -1,18 +1,40 @@
 // src/format/streamjson.ts
-import type { TranscriptEvent, ResultObject } from "../types";
+import type { ResultObject, TranscriptEvent } from "../types";
 
-function assistantLine(sessionId: string, e: Extract<TranscriptEvent, { kind: "assistant" }>): string {
+function assistantLine(
+  sessionId: string,
+  e: Extract<TranscriptEvent, { kind: "assistant" }>,
+): string {
   return JSON.stringify({
     type: "assistant",
     session_id: sessionId,
-    message: { role: "assistant", model: e.model, content: e.content, stop_reason: e.stop_reason, usage: e.usage },
+    message: {
+      role: "assistant",
+      model: e.model,
+      content: e.content,
+      stop_reason: e.stop_reason,
+      usage: e.usage,
+    },
   });
 }
-function userLine(sessionId: string, e: Extract<TranscriptEvent, { kind: "user" }>): string {
-  return JSON.stringify({ type: "user", session_id: sessionId, message: { role: "user", content: e.content } });
+function userLine(
+  sessionId: string,
+  e: Extract<TranscriptEvent, { kind: "user" }>,
+): string {
+  return JSON.stringify({
+    type: "user",
+    session_id: sessionId,
+    message: { role: "user", content: e.content },
+  });
 }
 function initLine(sessionId: string, model: string): string {
-  return JSON.stringify({ type: "system", subtype: "init", session_id: sessionId, model, tools: [] });
+  return JSON.stringify({
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    model,
+    tools: [],
+  });
 }
 
 /**
@@ -31,14 +53,21 @@ export function createStreamJsonEmitter(sessionId: string) {
   function flushBuffered(model: string): string[] {
     const out = [initLine(sessionId, model)];
     initEmitted = true;
-    for (const e of buffered) { const l = lineFor(e); if (l) out.push(l); }
+    for (const e of buffered) {
+      const l = lineFor(e);
+      if (l) out.push(l);
+    }
     buffered.length = 0;
     return out;
   }
   return {
     onEvent(e: TranscriptEvent): string[] {
-      if (initEmitted) { const l = lineFor(e); return l ? [l] : []; }
-      if (e.kind === "assistant") return [...flushBuffered(e.model), assistantLine(sessionId, e)];
+      if (initEmitted) {
+        const l = lineFor(e);
+        return l ? [l] : [];
+      }
+      if (e.kind === "assistant")
+        return [...flushBuffered(e.model), assistantLine(sessionId, e)];
       buffered.push(e);
       return [];
     },

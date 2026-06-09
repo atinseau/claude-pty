@@ -1,10 +1,12 @@
 // tests/reconstruct.test.ts
-import { test, expect } from "bun:test";
-import { parseTranscript } from "../src/transcript";
+import { expect, test } from "bun:test";
 import { reconstruct } from "../src/reconstruct";
+import { parseTranscript } from "../src/transcript";
 
 test("reconstruct builds the -p result object from the fixture", async () => {
-  const events = parseTranscript(await Bun.file("tests/fixtures/session.jsonl").text());
+  const events = parseTranscript(
+    await Bun.file("tests/fixtures/session.jsonl").text(),
+  );
   const costFn = (_m: string, u: any) =>
     (u.input_tokens + u.output_tokens) / 1000;
   const r = reconstruct(events, costFn, "11111111-1111-1111-1111-111111111111");

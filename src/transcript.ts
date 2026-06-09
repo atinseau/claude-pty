@@ -1,5 +1,5 @@
 // src/transcript.ts
-import type { TranscriptEvent, ContentBlock, Usage } from "./types";
+import type { ContentBlock, TranscriptEvent, Usage } from "./types";
 
 const IGNORED: TranscriptEvent = { kind: "ignored" };
 
@@ -15,7 +15,11 @@ function normalizeUsage(u: any): Usage {
 export function parseLine(line: string): TranscriptEvent {
   if (!line.trim()) return IGNORED;
   let o: any;
-  try { o = JSON.parse(line); } catch { return IGNORED; }
+  try {
+    o = JSON.parse(line);
+  } catch {
+    return IGNORED;
+  }
   const msg = o?.message;
   if (o?.type === "assistant" && msg) {
     return {
@@ -40,5 +44,8 @@ export function parseLine(line: string): TranscriptEvent {
 }
 
 export function parseTranscript(text: string): TranscriptEvent[] {
-  return text.split("\n").map(parseLine).filter(e => e.kind !== "ignored");
+  return text
+    .split("\n")
+    .map(parseLine)
+    .filter((e) => e.kind !== "ignored");
 }

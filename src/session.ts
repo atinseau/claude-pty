@@ -14,14 +14,19 @@ function flagValue(argv: string[], flag: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
-export function resolveSessionId(argv: string[], genId: () => string = () => crypto.randomUUID()): SessionResolution {
+export function resolveSessionId(
+  argv: string[],
+  genId: () => string = () => crypto.randomUUID(),
+): SessionResolution {
   const resume = flagValue(argv, "--resume") ?? flagValue(argv, "-r");
-  if (resume) return { sessionId: resume, injectSessionId: false, mode: "resume" };
+  if (resume)
+    return { sessionId: resume, injectSessionId: false, mode: "resume" };
   if (argv.includes("--continue") || argv.includes("-c")) {
     return { sessionId: null, injectSessionId: false, mode: "continue" };
   }
   const explicit = flagValue(argv, "--session-id");
-  if (explicit) return { sessionId: explicit, injectSessionId: false, mode: "explicit" };
+  if (explicit)
+    return { sessionId: explicit, injectSessionId: false, mode: "explicit" };
   return { sessionId: genId(), injectSessionId: true, mode: "new" };
 }
 
@@ -32,9 +37,12 @@ export function projectDirName(cwd: string): string {
 const PROJECTS_ROOT = join(homedir(), ".claude", "projects");
 
 /** Locate a transcript by exact session id (glob avoids recomputing the cwd hash). */
-export async function findTranscriptById(sessionId: string): Promise<string | null> {
+export async function findTranscriptById(
+  sessionId: string,
+): Promise<string | null> {
   const glob = new Bun.Glob(`**/${sessionId}.jsonl`);
-  for await (const f of glob.scan({ cwd: PROJECTS_ROOT, absolute: true })) return f;
+  for await (const f of glob.scan({ cwd: PROJECTS_ROOT, absolute: true }))
+    return f;
   return null;
 }
 

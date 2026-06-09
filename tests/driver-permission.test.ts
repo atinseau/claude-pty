@@ -6,8 +6,8 @@
 // Phrases verified in docs/superpowers/findings/spike-B-permission.md
 // against a live calibration run (session 0a722727, Claude Code 2.1.168).
 
-import { test, expect } from "bun:test";
-import { isPermissionPrompt, DENY_KEYSTROKE } from "../src/driver";
+import { expect, test } from "bun:test";
+import { DENY_KEYSTROKE, isPermissionPrompt } from "../src/driver";
 
 test("DENY_KEYSTROKE is a single ESC byte (0x1b)", () => {
   expect(DENY_KEYSTROKE.length).toBe(1);
@@ -25,7 +25,9 @@ test("does not fire on normal assistant output", () => {
 });
 
 test("fires on 'This command requires approval' alone", () => {
-  expect(isPermissionPrompt("...some preamble...This command requires approval...")).toBe(true);
+  expect(
+    isPermissionPrompt("...some preamble...This command requires approval..."),
+  ).toBe(true);
 });
 
 test("fires on 'Do you want to proceed?' alone", () => {
