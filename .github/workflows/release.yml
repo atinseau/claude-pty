@@ -102,6 +102,11 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (for the release-body template)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.version }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -117,4 +122,6 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version }}
           name: ${{ needs.prepare.outputs.version }}
           files: artifacts/*
+          # Install tutorial first, then the auto-generated changelog appended.
+          body_path: .github/release-body.md
           generate_release_notes: true
