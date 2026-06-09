@@ -118,3 +118,26 @@ test("--append-system-prompt passes through even when --json-schema present", ()
   expect(c.passthrough).toContain("--append-system-prompt");
   expect(c.passthrough).toContain("extra.");
 });
+
+// ─── --input-format tests ─────────────────────────────────────────────────────
+
+test("inputFormat defaults to text", () => {
+  const c = parseArgs(["hello"], fixedId);
+  expect(c.inputFormat).toBe("text");
+});
+
+test("--input-format stream-json sets inputFormat to stream-json", () => {
+  const c = parseArgs(["--input-format", "stream-json"], fixedId);
+  expect(c.inputFormat).toBe("stream-json");
+});
+
+test("--input-format is NOT forwarded to passthrough", () => {
+  const c = parseArgs(["--input-format", "stream-json", "hi"], fixedId);
+  expect(c.passthrough).not.toContain("--input-format");
+  expect(c.passthrough).not.toContain("stream-json");
+});
+
+test("--input-format text sets inputFormat to text explicitly", () => {
+  const c = parseArgs(["--input-format", "text", "hi"], fixedId);
+  expect(c.inputFormat).toBe("text");
+});

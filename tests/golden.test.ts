@@ -83,6 +83,20 @@ test("-p flag causes non-zero exit", async () => {
   expect(code).not.toBe(0);
 });
 
+test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("--input-format stream-json injects multiple turns", async () => {
+  const ndjson = JSON.stringify({type:"user",content:"Remember the number 7. Reply OK."}) + "\n" +
+                 JSON.stringify({type:"user",content:"What number did I say? Reply with just the number."}) + "\n";
+  const p = Bun.spawn(["bun","run","src/main.ts","--input-format","stream-json","--output-format","stream-json"], {
+    stdin: new TextEncoder().encode(ndjson),
+    env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "120000" }
+  });
+  const out = await new Response(p.stdout).text();
+  const types = out.trim().split("\n").map(l => { try { return JSON.parse(l).type } catch { return "?" } });
+  expect(types).toContain("assistant");
+  expect(types[types.length-1]).toBe("result");
+  expect(out).toContain("7"); // the second turn recalled the number → multi-turn worked
+}, 180000);
+
 test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("--json-schema yields structured_output via TUI (no -p)", async () => {
   const schema = '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
   const out = await new Response(

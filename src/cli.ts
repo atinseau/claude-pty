@@ -3,6 +3,8 @@ export interface Config {
   message: string;
   sessionId: string;
   outputFormat: "text" | "json" | "stream-json";
+  /** Input format: "text" (default) or "stream-json" (NDJSON multi-turn). */
+  inputFormat: "text" | "stream-json";
   verbose: boolean;
   passthrough: string[];
   /** Raw --json-schema value (captured, NOT forwarded directly). */
@@ -11,7 +13,7 @@ export interface Config {
   systemPrompt?: string;
 }
 
-const CONSUMED_WITH_VALUE = new Set(["--output-format", "--input-format"]);
+const CONSUMED_WITH_VALUE = new Set(["--output-format"]);
 
 /** Passthrough flags that are boolean — they must NOT consume the following token as a value. */
 const PASSTHROUGH_BOOL = new Set([
@@ -39,6 +41,7 @@ export function buildSchemaInstruction(schema: string): string {
 export function parseArgs(argv: string[], genId: () => string = () => crypto.randomUUID()): Config {
   let message = "";
   let outputFormat: Config["outputFormat"] = "text";
+  let inputFormat: Config["inputFormat"] = "text";
   let verbose = false;
   let sessionId = "";
   const passthrough: string[] = [];
@@ -57,6 +60,7 @@ export function parseArgs(argv: string[], genId: () => string = () => crypto.ran
 
     if (a === "--verbose") { verbose = true; continue; }
     if (a === "--output-format") { outputFormat = argv[++i] as Config["outputFormat"]; continue; }
+    if (a === "--input-format") { inputFormat = argv[++i] as Config["inputFormat"]; continue; }
     if (CONSUMED_WITH_VALUE.has(a)) { i++; continue; }
 
     // Capture --json-schema: do NOT forward to passthrough.
@@ -83,5 +87,5 @@ export function parseArgs(argv: string[], genId: () => string = () => crypto.ran
   if (mergedSP) passthrough.push("--system-prompt", mergedSP);
 
   if (!sessionId) sessionId = genId();
-  return { message, sessionId, outputFormat, verbose, passthrough, jsonSchema, systemPrompt };
+  return { message, sessionId, outputFormat, inputFormat, verbose, passthrough, jsonSchema, systemPrompt };
 }

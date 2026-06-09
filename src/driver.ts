@@ -168,6 +168,17 @@ export interface DriverHooks {
 export interface Session {
   pty: IPty;
   snapshot: () => string;
+  /**
+   * Resolves when the first prompt-ready signal is seen (TUI has started up).
+   * Useful in multi-turn mode: await ready before calling send().
+   */
+  ready: Promise<void>;
+  /**
+   * Inject a message and await completion of that turn (prompt returns + debounce).
+   * Only valid in multi-turn mode (config.message === "").
+   * Rejects if called while a turn is already in progress.
+   */
+  send: (message: string) => Promise<void>;
 }
 
 /**
@@ -175,6 +186,14 @@ export interface Session {
  * when the prompt is ready and when the assistant turn completes.
  *
  * Returns a Session with the IPty and a snapshot() function for pty output.
+ *
+ * Single-turn mode (config.message non-empty):
+ *   Injects the message once after the first prompt-ready signal, calls
+ *   hooks.onTurnDone when the turn completes. Behavior is unchanged.
+ *
+ * Multi-turn mode (config.message === ""):
+ *   Does NOT auto-inject. Caller awaits session.ready, then calls session.send()
+ *   sequentially for each message.
  */
 export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   // Build args: skip --session-id injection when passthrough already has a
@@ -209,6 +228,15 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   let outputLog = "";
   const OUTPUT_CAP = 65536;
 
+  // ─── Ready promise (resolves when TUI prompt first appears) ──────────────
+  let _readyResolve: (() => void) | null = null;
+  const readyPromise = new Promise<void>((resolve) => { _readyResolve = resolve; });
+
+  // ─── Per-turn send() resolver (multi-turn mode) ───────────────────────────
+  let _sendResolve: (() => void) | null = null;
+
+  const multiTurnMode = config.message === "";
+
   pty.onData((data: string) => {
     buffer += data;
     if (buffer.length > BUFFER_CAP) buffer = buffer.slice(-BUFFER_CAP);
@@ -216,17 +244,23 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     if (outputLog.length > OUTPUT_CAP) outputLog = outputLog.slice(-OUTPUT_CAP);
 
     if (!injected && isReady(buffer)) {
-      // First time the prompt box appears — inject the user message.
       injected = true;
       hooks.onReady?.();
-      // Small delay to let the TUI finish rendering before we type
-      setTimeout(() => {
-        ptyWrite(pty, config.message + "\r");
-        buffer = ""; // reset so the post-turn ready check starts clean
-        awaitingTurn = true;
-      }, 50);
+      _readyResolve?.();
+      _readyResolve = null;
+
+      if (!multiTurnMode) {
+        // Single-turn: auto-inject the message after 50ms render delay.
+        setTimeout(() => {
+          ptyWrite(pty, config.message + "\r");
+          buffer = ""; // reset so the post-turn ready check starts clean
+          awaitingTurn = true;
+        }, 50);
+      }
+      // In multi-turn mode: do NOT auto-inject; caller will call send().
       return;
     }
+
     // Auto-deny permission box (faithful to claude -p which denies tools outside --allowedTools).
     // Fires once per unique box render: send ESC, which clears the dialog without executing the tool.
     // The turn continues normally after dismissal and eventually fires onTurnDone via the prompt signal.
@@ -247,10 +281,31 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
           if (turnDone) return;
           turnDone = true;
           hooks.onTurnDone?.();
+          // Resolve the pending send() promise (multi-turn mode).
+          const resolve = _sendResolve;
+          _sendResolve = null;
+          resolve?.();
         }, TURN_DONE_DEBOUNCE_MS);
       }
     }
   });
 
-  return { pty, snapshot: () => outputLog };
+  /**
+   * Multi-turn send: injects a message and returns a Promise that resolves
+   * when that turn's prompt-done signal is observed (prompt reappears + debounce).
+   */
+  function send(message: string): Promise<void> {
+    if (awaitingTurn && !turnDone) {
+      return Promise.reject(new Error("send() called while a turn is already in progress"));
+    }
+    return new Promise<void>((resolve) => {
+      _sendResolve = resolve;
+      buffer = ""; // Clear buffer so leftover ❯ from previous turn doesn't instantly satisfy
+      awaitingTurn = true;
+      turnDone = false;
+      ptyWrite(pty, message + "\r");
+    });
+  }
+
+  return { pty, snapshot: () => outputLog, ready: readyPromise, send };
 }

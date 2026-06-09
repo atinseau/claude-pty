@@ -2,6 +2,7 @@
 import { parseArgs } from "./cli";
 import { combineMessage, readStdin } from "./stdin";
 import { startSession } from "./driver";
+import { parseNdjsonMessages } from "./ndjson";
 import { reconstruct } from "./reconstruct";
 import { costOf } from "./pricing";
 import { formatText } from "./format/text";
@@ -33,7 +34,17 @@ async function main() {
     process.exit(2);
   }
   const stdinText = await readStdin();
-  config.message = combineMessage(config.message, stdinText);
+
+  // In stream-json input mode, stdin is NDJSON messages — do NOT combine with positional message.
+  // In text mode, combine positional + stdin text as before.
+  let ndjsonMessages: string[] = [];
+  if (config.inputFormat === "stream-json") {
+    ndjsonMessages = parseNdjsonMessages(stdinText);
+    config.message = ""; // multi-turn mode: driver must NOT auto-inject
+  } else {
+    config.message = combineMessage(config.message, stdinText);
+  }
+
   const sess = resolveSessionId(argv);
   // Single source of truth for the id the driver injects (fixes double-generation).
   config.sessionId = sess.sessionId ?? "";
@@ -60,25 +71,70 @@ async function main() {
   let path: string | null = null;
   let sawTerminal = false;
 
-  while (Date.now() < deadline) {
-    if (!path) {
-      path = await locate();
-      if (path) effectiveId = basename(path).replace(/\.jsonl$/, "");
-    }
-    if (path) {
-      const text = await Bun.file(path).text();
-      const fresh = cursor.consume(text);
-      for (const e of fresh) {
-        collected.push(e);
-        if (config.outputFormat === "stream-json") {
-          if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
-          for (const line of emitter.onEvent(e)) process.stdout.write(line + "\n");
+  if (config.inputFormat === "stream-json") {
+    // ─── Multi-turn: inject messages sequentially, poll loop runs concurrently ──
+
+    // allTurnsDone: set to true after the last send() resolves; signals poll loop to finish.
+    let allTurnsDone = false;
+
+    // Poll loop: runs concurrently while we inject messages.
+    const pollLoop = async () => {
+      while (Date.now() < deadline) {
+        if (!path) {
+          path = await locate();
+          if (path) effectiveId = basename(path).replace(/\.jsonl$/, "");
         }
+        if (path) {
+          const text = await Bun.file(path).text();
+          const fresh = cursor.consume(text);
+          for (const e of fresh) {
+            collected.push(e);
+            if (config.outputFormat === "stream-json") {
+              if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
+              for (const line of emitter.onEvent(e)) process.stdout.write(line + "\n");
+            }
+          }
+          sawTerminal = isTerminal(collected);
+        }
+        if (allTurnsDone && sawTerminal) break;
+        await new Promise((r) => setTimeout(r, POLL_MS));
       }
-      sawTerminal = isTerminal(collected);
+    };
+
+    // Inject messages sequentially: wait for TUI ready, then send each in order.
+    const injectMessages = async () => {
+      await session.ready;
+      for (const msg of ndjsonMessages) {
+        await session.send(msg);
+      }
+      allTurnsDone = true;
+    };
+
+    // Run both concurrently and wait for the poll loop to drain.
+    await Promise.all([injectMessages(), pollLoop()]);
+
+  } else {
+    // ─── Single-turn path (unchanged) ──────────────────────────────────────────
+    while (Date.now() < deadline) {
+      if (!path) {
+        path = await locate();
+        if (path) effectiveId = basename(path).replace(/\.jsonl$/, "");
+      }
+      if (path) {
+        const text = await Bun.file(path).text();
+        const fresh = cursor.consume(text);
+        for (const e of fresh) {
+          collected.push(e);
+          if (config.outputFormat === "stream-json") {
+            if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
+            for (const line of emitter.onEvent(e)) process.stdout.write(line + "\n");
+          }
+        }
+        sawTerminal = isTerminal(collected);
+      }
+      if (ptyDone && sawTerminal) break;
+      await new Promise((r) => setTimeout(r, POLL_MS));
     }
-    if (ptyDone && sawTerminal) break;
-    await new Promise((r) => setTimeout(r, POLL_MS));
   }
 
   session.pty.kill();
