@@ -1,5 +1,9 @@
 // tests/golden.test.ts
+
 import { expect, test } from "bun:test";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 const RUN = process.env.CLAUDE_PTY_E2E === "1";
 
@@ -147,6 +151,41 @@ test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")(
     expect(out.toLowerCase()).toContain("platypus");
   },
   150000,
+);
+
+test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")(
+  "first-run trust dialog is auto-accepted; run completes without hanging",
+  async () => {
+    // Run in a BRAND-NEW directory Claude has never been trusted in. On first
+    // run the interactive TUI shows the workspace-trust dialog BEFORE the input
+    // prompt is ready; without auto-accept the run hangs to the turn timeout.
+    // See docs/superpowers/findings/spike-D-trust.md.
+    const freshCwd = mkdtempSync(join(tmpdir(), "cp-trust-e2e-"));
+    const p = Bun.spawn(
+      [
+        "bun",
+        "run",
+        join(import.meta.dir, "..", "src", "main.ts"),
+        "--output-format",
+        "text",
+        "Reply with exactly the word: pong",
+      ],
+      {
+        cwd: freshCwd,
+        env: {
+          ...process.env,
+          CLAUDE_CODE_SESSION_ID: undefined,
+          CLAUDE_PTY_TURN_TIMEOUT_MS: "90000",
+        },
+      },
+    );
+    const out = await new Response(p.stdout).text();
+    await p.exited;
+    // Did not hang to timeout: produced a real answer containing "pong".
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.toLowerCase()).toContain("pong");
+  },
+  120000,
 );
 
 // Non-e2e: --print must exit non-zero (claude-pty replaces -p; passing --print is an error)

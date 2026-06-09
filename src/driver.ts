@@ -164,6 +164,53 @@ export function isPermissionPrompt(buffer: string): boolean {
  */
 export const DENY_KEYSTROKE = "";
 
+/**
+ * Detects the workspace-trust dialog ("Is this a project you ... trust?").
+ *
+ * On the VERY FIRST run in a directory Claude has never seen (no
+ * `hasTrustDialogAccepted: true` for that path in ~/.claude.json), the
+ * interactive TUI renders a full-screen trust prompt BEFORE the input prompt is
+ * ever ready. If left unanswered, the prompt-ready signal (❯ + NBSP) never
+ * appears and claude-pty hangs forever. `claude -p` skips this dialog; the
+ * interactive TUI does not.
+ *
+ * Verified in docs/superpowers/findings/spike-D-trust.md (Claude Code 2.1.169,
+ * fresh dir C:\Temp\cp-trust-*). The dialog's raw pty frame looks like:
+ *
+ *   "...[3;2HAccessing[1Cworkspace:...
+ *      Is[1Cthis[1Ca[1Cproject[1Cyou[1Ccreated...trust?...
+ *      [14;2H❯...1.[1CYes,[1CI[1Ctrust[1Cthis[1Cfolder
+ *      [15;4H2.[m[1CNo,[1Cexit
+ *      [17;2HEnter[1Cto[1Cconfirm..."
+ *
+ * IMPORTANT: words inside the dialog are separated by `[1C` (cursor-forward
+ * one column) escapes, NOT literal spaces — so multi-word phrases like
+ * "Yes, I trust this folder" do NOT appear as contiguous substrings. The matcher
+ * therefore keys off SINGLE contiguous tokens that survive intact in the stream:
+ * the two option labels "Yes," and "No," plus the word "trust". Requiring all
+ * three together avoids false-positives on ordinary output.
+ *
+ * Exported for unit testing — keep this pure (no side-effects).
+ */
+export function isTrustPrompt(buffer: string): boolean {
+  return (
+    buffer.includes("Yes,") &&
+    buffer.includes("No,") &&
+    buffer.includes("trust")
+  );
+}
+
+/**
+ * Keystroke that ACCEPTS the trust dialog (Enter / carriage return, 0x0D).
+ *
+ * The dialog's default selection is option 1 ("❯ 1. Yes, I trust this folder")
+ * and the footer reads "Enter to confirm". Verified in spike-D-trust.md: sending
+ * "\r" selects "Yes, I trust this folder" (the TUI redraws it with a ✔), the
+ * directory is recorded as trusted, and the session then renders the normal
+ * welcome frame containing the prompt-ready signal (❯ + NBSP) — the hang is gone.
+ */
+export const TRUST_ACCEPT_KEYSTROKE = "\r";
+
 /** Rolling buffer cap in bytes — keeps memory bounded. */
 const BUFFER_CAP = 16384;
 
@@ -227,6 +274,10 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   });
 
   let buffer = "";
+  // Trust dialog is accepted at most once, in the PRE-ready phase (before the
+  // input prompt ever appears). See isTrustPrompt() for why this must not be
+  // gated behind `injected`.
+  let trustAccepted = false;
   let injected = false;
   // Turn-done detection only starts once the message has actually been written
   // (after the 50ms render delay), so the startup ready-signal can't be mistaken
@@ -256,6 +307,20 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     if (buffer.length > BUFFER_CAP) buffer = buffer.slice(-BUFFER_CAP);
     outputLog += data;
     if (outputLog.length > OUTPUT_CAP) outputLog = outputLog.slice(-OUTPUT_CAP);
+
+    // ─── Pre-ready: auto-accept the workspace-trust dialog (first-run only) ──
+    // This dialog appears BEFORE the input prompt is ready, so it must be
+    // handled here, NOT gated behind `injected`/`awaitingTurn` (otherwise the
+    // session hangs waiting for a ready signal that never comes). Fire exactly
+    // once: send Enter to confirm "Yes, I trust this folder", then reset the
+    // buffer so the trust tokens can't re-trigger and the subsequent welcome
+    // frame's ready signal is detected cleanly.
+    if (!trustAccepted && !injected && isTrustPrompt(buffer)) {
+      trustAccepted = true;
+      ptyWrite(pty, TRUST_ACCEPT_KEYSTROKE);
+      buffer = "";
+      return;
+    }
 
     if (!injected && isReady(buffer)) {
       injected = true;
