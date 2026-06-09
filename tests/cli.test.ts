@@ -20,6 +20,16 @@ test("modelFlag returns empty string when --model has no value", () => {
   expect(modelFlag(["--model"])).toBe("");
 });
 
+// ─── daemon control flags are consumed, not forwarded to the claude TUI ───────
+
+test("--daemon and --no-daemon are not forwarded to passthrough", () => {
+  const c = parseArgs(["--no-daemon", "--model", "x", "hello"], fixedId);
+  expect(c.passthrough).not.toContain("--no-daemon");
+  expect(c.passthrough).not.toContain("--daemon");
+  expect(c.passthrough).toContain("--model");
+  expect(c.message).toBe("hello");
+});
+
 // ─── --help / -h tests ────────────────────────────────────────────────────────
 
 test("help defaults to false when no help flag is present", () => {

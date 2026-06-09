@@ -83,6 +83,8 @@ OPTIONS OWNED BY claude-pty (consumed, not forwarded to claude)
   --system-prompt <text>  System prompt (merged with the --json-schema
                           instruction when both are given).
   --verbose               Verbose mode.
+  --no-daemon             Force the in-process direct path even if the daemon
+                          is enabled (see CLAUDE_PTY_DAEMON).
   -h, --help              Show this help and exit.
 
 PASSTHROUGH
@@ -95,6 +97,10 @@ PASSTHROUGH
 ENVIRONMENT
   CLAUDE_PTY_BIN              Path to the claude binary to drive.
   CLAUDE_PTY_TURN_TIMEOUT_MS  Per-run hard deadline in ms. Default: 600000.
+  CLAUDE_PTY_DAEMON           Set to 1 to route runs through a background daemon
+                              (opt-in, default off). Falls back to the direct
+                              path on any daemon error. Override per-run with
+                              --no-daemon.
 
 EXIT CODES
   0  success
@@ -142,6 +148,12 @@ export function parseArgs(
 
     if (a === "--verbose") {
       verbose = true;
+      continue;
+    }
+    // Daemon control flags are claude-pty-owned: consume them so they never leak
+    // to the claude TUI's argv. --daemon (server mode) is handled in main()
+    // before parseArgs; --no-daemon only opts the client out of using a daemon.
+    if (a === "--daemon" || a === "--no-daemon") {
       continue;
     }
     if (a === "--output-format") {
