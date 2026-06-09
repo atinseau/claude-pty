@@ -45,3 +45,27 @@ export function turnComplete(
   if (ptyDone && eventCount === 0) return true;
   return false;
 }
+
+/**
+ * Count completed user turns in a transcript = the number of assistant messages
+ * with a terminal stop_reason.
+ *
+ * Each user turn ends in exactly one terminal assistant message (intermediate
+ * tool_use / still-streaming messages are not terminal), so this equals the
+ * number of turns whose answer is fully written. Used by the multi-turn driver
+ * to know when turn N has finished — without waiting out the pty debounce —
+ * before injecting turn N+1.
+ */
+export function countTerminalTurns(events: TranscriptEvent[]): number {
+  let n = 0;
+  for (const e of events) {
+    if (
+      e.kind === "assistant" &&
+      e.stop_reason !== "tool_use" &&
+      e.stop_reason !== null
+    ) {
+      n++;
+    }
+  }
+  return n;
+}

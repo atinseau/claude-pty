@@ -30,6 +30,20 @@ const PASSTHROUGH_BOOL = new Set([
 ]);
 
 /**
+ * Extract the `--model` value from a passthrough arg list, or "" if absent.
+ *
+ * Used to populate the model field of the stream-json `system/init` line that
+ * claude-pty emits as soon as the session is ready — before any assistant event
+ * exists to learn the model from. When the caller did not pin a model, "" is
+ * returned (consistent with the emitter's no-assistant fallback).
+ */
+export function modelFlag(passthrough: string[]): string {
+  const i = passthrough.indexOf("--model");
+  if (i < 0) return "";
+  return passthrough[i + 1] ?? "";
+}
+
+/**
  * Build the schema-enforcement instruction for the system prompt.
  * Tells Claude to output ONLY a JSON object conforming to the given schema.
  */

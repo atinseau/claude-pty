@@ -1,7 +1,7 @@
 // src/main.ts
 
 import { basename } from "path";
-import { helpText, parseArgs } from "./cli";
+import { helpText, modelFlag, parseArgs } from "./cli";
 import { startSession } from "./driver";
 import { detectError } from "./errors";
 import { formatJson } from "./format/json";
@@ -18,7 +18,7 @@ import {
 import { combineMessage, readStdin } from "./stdin";
 import { extractJson, validateAgainstSchema } from "./structured";
 import { makeTranscriptCursor } from "./tailer";
-import { isTerminal, turnComplete } from "./turn";
+import { countTerminalTurns, isTerminal, turnComplete } from "./turn";
 import type { TranscriptEvent } from "./types";
 
 const TURN_TIMEOUT_MS =
@@ -89,63 +89,76 @@ async function main() {
   let path: string | null = null;
   let sawTerminal = false;
 
+  // ─── stream-json: emit system/init up-front (A) ───────────────────────────
+  // Emit init as soon as the session id is known, so consumers see the session
+  // start ~immediately instead of waiting for the first assistant event. The
+  // model comes from --model when pinned, else "". In --continue mode the id is
+  // unknown until the transcript is located, so we defer to the lazy init then.
+  const initModel = modelFlag(config.passthrough);
+  function emitInitEarly(): void {
+    if (config.outputFormat !== "stream-json" || !effectiveId) return;
+    if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
+    for (const line of emitter.initEarly(initModel))
+      process.stdout.write(line + "\n");
+  }
+
   if (config.inputFormat === "stream-json") {
-    // ─── Multi-turn: inject messages sequentially, poll loop runs concurrently ──
+    // ─── Multi-turn: inject each message, then drive turn completion from the
+    // transcript (B). For each turn we wait until the transcript shows one more
+    // terminal assistant message AND the pty prompt has returned (promptBack) —
+    // no 800ms debounce. Gating the next inject on promptBack keeps keystrokes
+    // from landing before the input box is ready.
+    await session.ready;
+    emitInitEarly();
 
-    // allTurnsDone: set to true after the last send() resolves; signals poll loop to finish.
-    let allTurnsDone = false;
-
-    // Poll loop: runs concurrently while we inject messages.
-    const pollLoop = async () => {
-      while (Date.now() < deadline) {
-        if (!path) {
-          path = await locate();
-          if (path) effectiveId = basename(path).replace(/\.jsonl$/, "");
-        }
+    const drainTranscript = async () => {
+      if (!path) {
+        path = await locate();
         if (path) {
-          const text = await Bun.file(path).text();
-          const fresh = cursor.consume(text);
-          for (const e of fresh) {
-            collected.push(e);
-            if (config.outputFormat === "stream-json") {
-              if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
-              for (const line of emitter.onEvent(e))
-                process.stdout.write(line + "\n");
-            }
-          }
-          sawTerminal = isTerminal(collected);
+          effectiveId = basename(path).replace(/\.jsonl$/, "");
+          emitInitEarly(); // --continue: id only known now
         }
-        if (allTurnsDone && sawTerminal) break;
+      }
+      if (path) {
+        const text = await Bun.file(path).text();
+        const fresh = cursor.consume(text);
+        for (const e of fresh) {
+          collected.push(e);
+          if (config.outputFormat === "stream-json") {
+            if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
+            for (const line of emitter.onEvent(e))
+              process.stdout.write(line + "\n");
+          }
+        }
+      }
+    };
+
+    let completed = 0;
+    for (const msg of ndjsonMessages) {
+      session.inject(msg);
+      while (Date.now() < deadline) {
+        await drainTranscript();
+        // This turn is done once its terminal assistant is on disk AND the
+        // prompt has returned (so the next inject won't be swallowed).
+        if (countTerminalTurns(collected) > completed && session.promptBack())
+          break;
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
-    };
-
-    // Inject messages sequentially: wait for TUI ready, then send each in order.
-    const injectMessages = async () => {
-      await session.ready;
-      for (const msg of ndjsonMessages) {
-        await session.send(msg);
-      }
-      allTurnsDone = true;
-    };
-
-    // Run both concurrently; bound by the global deadline so a turn that never
-    // completes (TUI hang) can't make injectMessages await forever past the
-    // timeout. pollLoop already self-bounds on the deadline; this guards the
-    // inject side too.
-    const deadlineGuard = new Promise<void>((resolve) =>
-      setTimeout(resolve, Math.max(0, deadline - Date.now())),
-    );
-    await Promise.race([
-      Promise.all([injectMessages(), pollLoop()]),
-      deadlineGuard,
-    ]);
+      completed++;
+      if (Date.now() >= deadline) break;
+    }
+    sawTerminal = isTerminal(collected);
   } else {
-    // ─── Single-turn path (unchanged) ──────────────────────────────────────────
+    // ─── Single-turn path ───────────────────────────────────────────────────────
+    await session.ready;
+    emitInitEarly();
     while (Date.now() < deadline) {
       if (!path) {
         path = await locate();
-        if (path) effectiveId = basename(path).replace(/\.jsonl$/, "");
+        if (path) {
+          effectiveId = basename(path).replace(/\.jsonl$/, "");
+          emitInitEarly(); // --continue: id only known now
+        }
       }
       if (path) {
         const text = await Bun.file(path).text();

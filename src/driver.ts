@@ -262,15 +262,21 @@ export interface Session {
   snapshot: () => string;
   /**
    * Resolves when the first prompt-ready signal is seen (TUI has started up).
-   * Useful in multi-turn mode: await ready before calling send().
+   * Useful in multi-turn mode: await ready before calling inject().
    */
   ready: Promise<void>;
   /**
-   * Inject a message and await completion of that turn (prompt returns + debounce).
-   * Only valid in multi-turn mode (config.message === "").
-   * Rejects if called while a turn is already in progress.
+   * Multi-turn: inject a message (fire-and-forget). The caller drives turn
+   * completion from the transcript (countTerminalTurns) rather than waiting out
+   * the pty debounce, and gates the NEXT inject() on promptBack() so keystrokes
+   * never land before the input prompt has returned.
    */
-  send: (message: string) => Promise<void>;
+  inject: (message: string) => void;
+  /**
+   * True once the input prompt has reappeared since the last inject() — i.e. the
+   * TUI is ready to receive the next message. Reset by inject().
+   */
+  promptBack: () => boolean;
 }
 
 /**
@@ -284,8 +290,8 @@ export interface Session {
  *   hooks.onTurnDone when the turn completes. Behavior is unchanged.
  *
  * Multi-turn mode (config.message === ""):
- *   Does NOT auto-inject. Caller awaits session.ready, then calls session.send()
- *   sequentially for each message.
+ *   Does NOT auto-inject. Caller awaits session.ready, then calls session.inject()
+ *   for each message, sequencing turns off the transcript + promptBack().
  */
 export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   // Build args: skip --session-id injection when passthrough already has a
@@ -320,6 +326,10 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   // for the post-turn one in the window before injection completes.
   let awaitingTurn = false;
   let turnDone = false;
+  // Multi-turn injection gate: set when the input prompt reappears after an
+  // inject(), cleared by the next inject(). Lets the caller hold the next
+  // message until the TUI is ready to receive it — without the 800ms debounce.
+  let promptBackSeen = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   // Tracks the last permission box we denied — guards against re-firing on re-renders.
   let lastDeniedBox = "";
@@ -332,9 +342,6 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   const readyPromise = new Promise<void>((resolve) => {
     _readyResolve = resolve;
   });
-
-  // ─── Per-turn send() resolver (multi-turn mode) ───────────────────────────
-  let _sendResolve: (() => void) | null = null;
 
   const multiTurnMode = config.message === "";
 
@@ -388,41 +395,43 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     }
 
     if (awaitingTurn && !turnDone) {
-      // After injection, wait for the prompt to reappear AND the stream to
-      // go quiet (debounce) before declaring the turn done — exactly once.
       if (isReady(buffer)) {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => {
-          if (turnDone) return;
-          turnDone = true;
-          hooks.onTurnDone?.();
-          // Resolve the pending send() promise (multi-turn mode).
-          const resolve = _sendResolve;
-          _sendResolve = null;
-          resolve?.();
-        }, TURN_DONE_DEBOUNCE_MS);
+        // Prompt is back: the TUI can accept the next message. In multi-turn
+        // this latch (not a timer) gates the next inject(); in single-turn we
+        // still debounce before declaring the turn done via onTurnDone.
+        promptBackSeen = true;
+        if (!multiTurnMode) {
+          // After injection, wait for the prompt to reappear AND the stream to
+          // go quiet (debounce) before declaring the turn done — exactly once.
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            if (turnDone) return;
+            turnDone = true;
+            hooks.onTurnDone?.();
+          }, TURN_DONE_DEBOUNCE_MS);
+        }
       }
     }
   });
 
   /**
-   * Multi-turn send: injects a message and returns a Promise that resolves
-   * when that turn's prompt-done signal is observed (prompt reappears + debounce).
+   * Multi-turn inject: write a message to the TUI (fire-and-forget). Resets the
+   * promptBack latch so the caller can detect when THIS turn's prompt returns.
+   * Turn completion is observed by the caller from the transcript.
    */
-  function send(message: string): Promise<void> {
-    if (awaitingTurn && !turnDone) {
-      return Promise.reject(
-        new Error("send() called while a turn is already in progress"),
-      );
-    }
-    return new Promise<void>((resolve) => {
-      _sendResolve = resolve;
-      buffer = ""; // Clear buffer so leftover ❯ from previous turn doesn't instantly satisfy
-      awaitingTurn = true;
-      turnDone = false;
-      ptyWrite(pty, message + "\r");
-    });
+  function inject(message: string): void {
+    buffer = ""; // clear so a leftover ❯ from the previous turn isn't mistaken for this one
+    awaitingTurn = true;
+    turnDone = false;
+    promptBackSeen = false;
+    ptyWrite(pty, message + "\r");
   }
 
-  return { pty, snapshot: () => outputLog, ready: readyPromise, send };
+  return {
+    pty,
+    snapshot: () => outputLog,
+    ready: readyPromise,
+    inject,
+    promptBack: () => promptBackSeen,
+  };
 }

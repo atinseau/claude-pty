@@ -1,6 +1,6 @@
 // tests/turn.test.ts
 import { describe, expect, test } from "bun:test";
-import { isTerminal, turnComplete } from "../src/turn";
+import { countTerminalTurns, isTerminal, turnComplete } from "../src/turn";
 import type { TranscriptEvent } from "../src/types";
 
 function assistant(stop_reason: string | null): TranscriptEvent {
@@ -19,6 +19,13 @@ function assistant(stop_reason: string | null): TranscriptEvent {
     uuid: "u",
   };
 }
+
+const user: TranscriptEvent = {
+  kind: "user",
+  content: [{ type: "text", text: "hi" }],
+  timestamp: "2026-01-01T00:00:00Z",
+  uuid: "u",
+};
 
 describe("isTerminal", () => {
   test("true when last assistant ended the turn (end_turn)", () => {
@@ -65,5 +72,35 @@ describe("turnComplete", () => {
   test("does not complete while neither signal is ready", () => {
     expect(turnComplete(false, false, 0)).toBe(false);
     expect(turnComplete(false, false, 3)).toBe(false);
+  });
+});
+
+describe("countTerminalTurns", () => {
+  test("counts one completed turn per terminal assistant message", () => {
+    expect(countTerminalTurns([user, assistant("end_turn")])).toBe(1);
+  });
+
+  test("does not count an in-progress turn (last assistant is tool_use)", () => {
+    // turn 1 done, turn 2 still awaiting a tool → only 1 completed turn.
+    expect(
+      countTerminalTurns([
+        user,
+        assistant("end_turn"),
+        user,
+        assistant("tool_use"),
+      ]),
+    ).toBe(1);
+  });
+
+  test("a tool_use then end_turn within one turn counts as a single completed turn", () => {
+    // tool_use is non-terminal (denied); only the trailing end_turn counts.
+    expect(
+      countTerminalTurns([user, assistant("tool_use"), assistant("end_turn")]),
+    ).toBe(1);
+  });
+
+  test("zero when no assistant has finished yet", () => {
+    expect(countTerminalTurns([user, assistant(null)])).toBe(0);
+    expect(countTerminalTurns([])).toBe(0);
   });
 });
