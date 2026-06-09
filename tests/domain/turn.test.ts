@@ -18,6 +18,8 @@ function assistant(stop_reason: string | null): TranscriptEvent {
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
     },
+    rawUsage: {},
+    requestId: "u",
     stop_reason,
     timestamp: "2026-01-01T00:00:00Z",
     uuid: "u",

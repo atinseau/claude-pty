@@ -27,6 +27,11 @@ export function parseLine(line: string): TranscriptEvent {
       model: msg.model ?? "",
       content: (msg.content ?? []) as ContentBlock[],
       usage: normalizeUsage(msg.usage),
+      rawUsage: (msg.usage ?? {}) as Record<string, unknown>,
+      // requestId groups the lines of one API round-trip (thinking + tool_use +
+      // text can be separate lines that share it). Fall back to the message uuid
+      // so a transcript without requestId still treats each line as its own turn.
+      requestId: (o.requestId ?? o.uuid ?? "") as string,
       stop_reason: msg.stop_reason ?? null,
       timestamp: o.timestamp ?? "",
       uuid: o.uuid ?? "",

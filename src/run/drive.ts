@@ -18,7 +18,7 @@ import type { Config } from "../cli/args";
 import { modelFlag } from "../cli/args";
 import { detectError } from "../domain/errors";
 import { costOf } from "../domain/pricing";
-import { reconstruct } from "../domain/reconstruct";
+import { errorResult, reconstruct } from "../domain/reconstruct";
 import { extractJson, validateAgainstSchema } from "../domain/schema";
 import { countTerminalTurns, isTerminal, turnComplete } from "../domain/turn";
 import type { TranscriptEvent } from "../domain/types";
@@ -228,25 +228,11 @@ export async function drive(
     // carries a recognisable banner (auth, etc.), matching `claude -p`'s shape.
     const earlyVerdict = detectError([], session.snapshot());
     if (earlyVerdict?.isError) {
-      const errResult = {
-        type: "result" as const,
+      const errResult = errorResult({
         subtype: earlyVerdict.subtype,
-        result: "",
-        session_id: effectiveId || "",
-        total_cost_usd: 0,
-        usage: {
-          input_tokens: 0,
-          output_tokens: 0,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
-        },
-        duration_ms: 0,
-        num_turns: 0,
-        is_error: true,
-        ...(earlyVerdict.apiErrorStatus !== undefined
-          ? { api_error_status: earlyVerdict.apiErrorStatus }
-          : {}),
-      };
+        sessionId: effectiveId || "",
+        apiErrorStatus: earlyVerdict.apiErrorStatus,
+      });
       if (config.outputFormat === "text") {
         sink.err(
           `error: ${earlyVerdict.subtype}${earlyVerdict.apiErrorStatus ? ` (${earlyVerdict.apiErrorStatus})` : ""}\n`,

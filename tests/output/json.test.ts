@@ -19,6 +19,17 @@ test("json format serializes the result object on one line", () => {
     duration_ms: 100,
     num_turns: 1,
     is_error: false,
+    api_error_status: null,
+    stop_reason: "end_turn",
+    modelUsage: {},
+    permission_denials: [],
+    terminal_reason: "completed",
+    uuid: "r-uuid",
+    fast_mode_state: "off",
+    duration_api_ms: null,
+    ttft_ms: null,
+    ttft_stream_ms: null,
+    time_to_request_ms: null,
   };
   const out = formatJson(r);
   expect(out.endsWith("\n")).toBe(false);

@@ -19,6 +19,13 @@ const asstEv: TranscriptEvent = {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   },
+  rawUsage: {
+    input_tokens: 1,
+    output_tokens: 1,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+  },
+  requestId: "a1",
   stop_reason: "end_turn",
   timestamp: "t2",
   uuid: "a1",

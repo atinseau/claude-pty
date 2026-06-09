@@ -33,6 +33,25 @@ function priceFor(model: string): Price | undefined {
   return undefined;
 }
 
+/**
+ * Static per-model metadata for `modelUsage` (contextWindow / maxOutputTokens).
+ * Only models whose values we have VERIFIED against real `claude -p` output are
+ * listed; for anything else we return undefined and omit the two fields rather
+ * than fabricate them. Keyed by the exact model string the transcript records.
+ */
+const MODEL_META: Record<
+  string,
+  { contextWindow: number; maxOutputTokens: number }
+> = {
+  "claude-opus-4-8[1m]": { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+};
+
+export function modelMeta(
+  model: string,
+): { contextWindow: number; maxOutputTokens: number } | undefined {
+  return MODEL_META[model];
+}
+
 export function costOf(model: string, u: Usage): number {
   const p = priceFor(model);
   if (!p) return 0;

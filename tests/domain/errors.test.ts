@@ -18,6 +18,8 @@ function makeAssistant(
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
     },
+    rawUsage: {},
+    requestId: "test-uuid",
     stop_reason,
     timestamp: "2026-06-08T00:00:00Z",
     uuid: "test-uuid",
