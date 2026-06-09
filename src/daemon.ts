@@ -17,6 +17,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { connect, createServer, type Socket } from "net";
 import { dirname } from "path";
 import { helpText, parseArgs } from "./cli";
+import { takeLiveWarm, warmMessages, warmSess } from "./daemon-logic";
 import { drive } from "./drive";
 import { CLAUDE_BIN, type Session, startSession } from "./driver";
 import {
@@ -268,13 +269,7 @@ async function handleConnection(
     // Poolable = a brand-new session (no --resume/--continue/--session-id): only
     // those can be served by an interchangeable pre-warmed TUI.
     const poolable = sess.mode === "new";
-    // Take the first LIVE warm TUI for this signature; reap any that died while
-    // idle (injecting into a dead pty would hang until the turn timeout).
-    let warm = poolable ? ctx.pool.take(sig) : null;
-    while (warm && !warm.value.alive()) {
-      warm.kill();
-      warm = ctx.pool.take(sig);
-    }
+    const warm = poolable ? takeLiveWarm(ctx.pool, sig) : null;
 
     let ptyDone = false;
     let session: Session;
@@ -285,18 +280,14 @@ async function handleConnection(
       // with its own session id, so inject explicitly (forceInject) and tail that
       // id's transcript. No new TUI spawned ⇒ not counted by the backstop.
       session = warm.value;
-      const messages =
-        config.inputFormat === "stream-json"
-          ? ndjsonMessages
-          : [config.message];
       driveDeps = {
-        sess: {
-          sessionId: warm.sessionId,
-          injectSessionId: false,
-          mode: "explicit",
-        },
+        sess: warmSess(warm.sessionId),
         preExisting: null,
-        ndjsonMessages: messages,
+        ndjsonMessages: warmMessages(
+          config.inputFormat,
+          config.message,
+          ndjsonMessages,
+        ),
         ptyDone: () => false,
         cwd,
         turnTimeoutMs: turnTimeoutMs(env),
