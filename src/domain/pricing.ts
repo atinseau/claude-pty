@@ -8,12 +8,15 @@ interface Price {
   cacheRead: number;
 }
 
+// USD per million tokens. Calibrated against real `claude -p` cost output (the
+// reported total_cost_usd matches these rates to 4+ significant figures across
+// opus/sonnet/haiku calibration samples — see tests/domain/pricing.test.ts).
 const TABLE: Record<string, Price> = {
   "claude-opus-4-8": {
-    input: 15,
-    output: 75,
-    cacheWrite: 18.75,
-    cacheRead: 1.5,
+    input: 5,
+    output: 25,
+    cacheWrite: 6.25,
+    cacheRead: 0.5,
   },
   "claude-sonnet-4-6": {
     input: 3,
@@ -43,7 +46,11 @@ const MODEL_META: Record<
   string,
   { contextWindow: number; maxOutputTokens: number }
 > = {
+  // Verified against `claude -p --model <m> --output-format json` (modelUsage).
   "claude-opus-4-8[1m]": { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+  "claude-opus-4-8": { contextWindow: 200_000, maxOutputTokens: 64_000 },
+  "claude-sonnet-4-6": { contextWindow: 200_000, maxOutputTokens: 32_000 },
+  "claude-haiku-4-5": { contextWindow: 200_000, maxOutputTokens: 32_000 },
 };
 
 export function modelMeta(
