@@ -122,7 +122,7 @@ function makePtyWriter(pty: IPty, coninFd: number | null) {
   };
 }
 
-const CLAUDE_BIN =
+export const CLAUDE_BIN =
   process.env.CLAUDE_PTY_BIN ?? "C:\\Users\\arthur\\.local\\bin\\claude.exe";
 
 /**
