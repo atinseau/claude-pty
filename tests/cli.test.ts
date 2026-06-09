@@ -1,8 +1,53 @@
 // tests/cli.test.ts
 import { expect, test } from "bun:test";
-import { parseArgs } from "../src/cli";
+import { helpText, parseArgs } from "../src/cli";
 
 const fixedId = () => "fixed-uuid";
+
+// ─── --help / -h tests ────────────────────────────────────────────────────────
+
+test("help defaults to false when no help flag is present", () => {
+  const c = parseArgs(["hello"], fixedId);
+  expect(c.help).toBe(false);
+});
+
+test("--help sets help to true", () => {
+  const c = parseArgs(["--help"], fixedId);
+  expect(c.help).toBe(true);
+});
+
+test("-h sets help to true", () => {
+  const c = parseArgs(["-h"], fixedId);
+  expect(c.help).toBe(true);
+});
+
+test("--help short-circuits: does not throw even when -p is also present", () => {
+  expect(() => parseArgs(["-p", "--help"], fixedId)).not.toThrow();
+  expect(parseArgs(["-p", "--help"], fixedId).help).toBe(true);
+});
+
+test("--help short-circuits before a positional message is consumed", () => {
+  const c = parseArgs(["do something", "--help"], fixedId);
+  expect(c.help).toBe(true);
+});
+
+test("helpText mentions the tool name and core claude-pty-owned flags", () => {
+  const t = helpText();
+  expect(t).toContain("claude-pty");
+  expect(t).toContain("--output-format");
+  expect(t).toContain("--input-format");
+  expect(t).toContain("--json-schema");
+  expect(t).toContain("--system-prompt");
+  expect(t).toContain("--help");
+});
+
+test("helpText documents passthrough behavior and env vars and exit codes", () => {
+  const t = helpText();
+  expect(t.toLowerCase()).toContain("passthrough");
+  expect(t).toContain("CLAUDE_PTY_BIN");
+  expect(t).toContain("CLAUDE_PTY_TURN_TIMEOUT_MS");
+  expect(t.toLowerCase()).toContain("exit");
+});
 
 test("extracts message and defaults output-format to text", () => {
   const c = parseArgs(["hello world"], fixedId);
