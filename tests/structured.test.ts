@@ -103,3 +103,24 @@ test("object with extra properties beyond required: still valid", () => {
   const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
   expect(validateAgainstSchema({ x: "hi", y: 99 }, schema)).toBe(true);
 });
+
+// ─── integer vs number (JSON Schema distinguishes them; JS typeof does not) ───
+
+test("integer type accepts a whole number", () => {
+  const schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] };
+  expect(validateAgainstSchema({ count: 3 }, schema)).toBe(true);
+});
+
+test("integer type rejects a non-whole number", () => {
+  const schema = { type: "object", properties: { count: { type: "integer" } }, required: ["count"] };
+  expect(validateAgainstSchema({ count: 3.5 }, schema)).toBe(false);
+});
+
+test("number type accepts a float", () => {
+  expect(validateAgainstSchema({ n: 3.5 }, { type: "object", properties: { n: { type: "number" } }, required: ["n"] })).toBe(true);
+});
+
+test("top-level integer type matches", () => {
+  expect(validateAgainstSchema(7, { type: "integer" })).toBe(true);
+  expect(validateAgainstSchema(7.2, { type: "integer" })).toBe(false);
+});

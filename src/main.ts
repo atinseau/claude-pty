@@ -59,7 +59,6 @@ async function main() {
   const deadline = Date.now() + TURN_TIMEOUT_MS;
   let path: string | null = null;
   let sawTerminal = false;
-  let lastText = "";
 
   while (Date.now() < deadline) {
     if (!path) {
@@ -68,7 +67,6 @@ async function main() {
     }
     if (path) {
       const text = await Bun.file(path).text();
-      lastText = text;
       const fresh = cursor.consume(text);
       for (const e of fresh) {
         collected.push(e);

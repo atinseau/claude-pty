@@ -90,9 +90,15 @@ export function validateAgainstSchema(value: unknown, schema: object): boolean {
     return typeof v; // "string" | "number" | "boolean" | "object" | "bigint" etc.
   }
 
-  const actualType = jsType(value);
+  // JSON Schema distinguishes "integer" from "number"; JS typeof reports both as
+  // "number". Treat "integer" as a whole number, "number" as any number.
+  function typeMatches(v: unknown, type: string): boolean {
+    if (type === "integer") return typeof v === "number" && Number.isInteger(v);
+    if (type === "number") return typeof v === "number";
+    return jsType(v) === type;
+  }
 
-  if (actualType !== schemaType) return false;
+  if (!typeMatches(value, schemaType)) return false;
 
   // For objects, check required keys and property types.
   if (schemaType === "object" && value !== null && typeof value === "object") {
@@ -109,7 +115,7 @@ export function validateAgainstSchema(value: unknown, schema: object): boolean {
     for (const key of Object.keys(obj)) {
       const propSchema = properties[key];
       if (propSchema && "type" in propSchema) {
-        if (jsType(obj[key]) !== propSchema["type"]) return false;
+        if (!typeMatches(obj[key], propSchema["type"] as string)) return false;
       }
     }
   }
