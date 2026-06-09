@@ -6,6 +6,11 @@ out
 dist
 *.tgz
 
+# compiled binaries + bun compile temp artifacts
+claude-pty.exe
+claude-pty
+*.bun-build
+
 # code coverage
 coverage
 *.lcov

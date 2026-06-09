@@ -76,10 +76,10 @@ Prerequisites:
 bun install
 ```
 
-Point `claude-pty` at your `claude` binary if it isn't at the default path:
+By default `claude-pty` finds `claude` on your `PATH`. Point it elsewhere with:
 
 ```bash
-export CLAUDE_PTY_BIN="/path/to/claude"   # default: C:\Users\arthur\.local\bin\claude.exe
+export CLAUDE_PTY_BIN="/path/to/claude"   # default: the `claude` found on PATH
 ```
 
 Run it directly with Bun, or compile a binary (see [Build](#build)):
