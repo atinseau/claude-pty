@@ -29,6 +29,7 @@ import type { Session } from "../pty/session";
 import {
   findTranscriptById,
   listTranscripts,
+  mostRecentTranscript,
   type SessionResolution,
 } from "../store/locate";
 import { makeTranscriptTail } from "../store/tail";
@@ -37,6 +38,13 @@ import { makeTranscriptTail } from "../store/tail";
 // stream-json mode, each intermediate event — is picked up promptly once the
 // transcript flushes; the files involved are tiny so the re-read cost is trivial.
 const POLL_MS = 40;
+
+// --resume / --continue settle window: the resumed TUI replays the prior
+// conversation before its input prompt is live. We inject only once the pty
+// output has been quiet this long (replay finished), capped by SETTLE_MAX_MS so
+// a perpetually-noisy session can't hang the run before its turn deadline.
+const SETTLE_QUIET_MS = 600;
+const SETTLE_MAX_MS = 15_000;
 
 /** Where drive() sends its output. Direct mode wires these to process streams. */
 export interface Sink {
@@ -102,10 +110,50 @@ export async function drive(
     for (const line of emitter.initEarly(initModel)) sink.out(line + "\n");
   }
 
-  if (config.inputFormat === "stream-json" || deps.forceInject) {
-    // ─── Multi-turn / warm path: inject each message, drive turn completion from
-    // the transcript (B), gating the next inject on promptBack().
+  // --resume / --continue are driven like a multi-turn injection (the message is
+  // injected by drive, not auto-injected at spawn), because the interactive TUI
+  // first REPLAYS the whole prior conversation before its input prompt goes live.
+  // We must let that replay settle, skip the inherited transcript, and submit the
+  // turn with a separated Enter — see the continuation block below.
+  const continuation = sess.mode === "resume" || sess.mode === "continue";
+
+  /** Resolve once the pty output stream has been quiet for `quietMs` (or `maxMs`). */
+  async function waitQuiet(quietMs: number, maxMs: number): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+      if (session.msSinceData() >= quietMs) return;
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+  }
+
+  if (
+    config.inputFormat === "stream-json" ||
+    deps.forceInject ||
+    continuation
+  ) {
+    // ─── Multi-turn / warm / continuation path ─────────────────────────────────
+    // Inject each message, drive turn completion from the transcript (B), gating
+    // the next inject on promptBack().
     await session.ready;
+
+    if (continuation) {
+      // The resumed TUI replays the prior conversation into the transcript and
+      // the screen BEFORE its input prompt is live. Wait for that replay to go
+      // quiet, then bind to the inherited transcript and PRIME the tail past its
+      // existing bytes, so we only ever collect THIS turn's events — both for a
+      // correct result (no stale-terminal early stop) and correct usage/cost
+      // (the prior turns are not summed in). claude appends the new turn to that
+      // same file (--resume <id>, or the most-recent session for --continue).
+      await waitQuiet(SETTLE_QUIET_MS, SETTLE_MAX_MS);
+      const base = sess.sessionId
+        ? await findTranscriptById(sess.sessionId)
+        : await mostRecentTranscript(deps.cwd);
+      if (base) {
+        path = base;
+        effectiveId = basename(base).replace(/\.jsonl$/, "");
+        await tail.prime(base);
+      }
+    }
     emitInitEarly();
 
     const drainTranscript = async () => {
@@ -142,7 +190,7 @@ export async function drive(
     }
     sawTerminal = isTerminal(collected);
   } else {
-    // ─── Single-turn path ─────────────────────────────────────────────────────
+    // ─── Single-turn path (new / explicit session) ─────────────────────────────
     await session.ready;
     emitInitEarly();
     while (Date.now() < deadline) {

@@ -27,6 +27,26 @@ const NEWLINE = 0x0a;
 export function makeTranscriptTail() {
   let offset = 0;
   return {
+    /**
+     * Advance the offset past everything already on disk, so subsequent poll()s
+     * return ONLY lines appended after this call. Used by --resume / --continue:
+     * the transcript already holds the prior conversation (ending in a terminal
+     * assistant message), and we must wait for THIS turn's fresh message instead
+     * of mistaking the inherited one for completion. A missing file is a no-op
+     * (offset stays 0, so the file is read from the start once it appears).
+     */
+    async prime(path: string): Promise<void> {
+      try {
+        const fd = await open(path, "r");
+        try {
+          offset = (await fd.stat()).size;
+        } finally {
+          await fd.close();
+        }
+      } catch {
+        /* file not present yet — leave offset at 0 */
+      }
+    },
     async poll(path: string): Promise<TranscriptEvent[]> {
       let fd: Awaited<ReturnType<typeof open>>;
       try {

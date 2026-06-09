@@ -31,19 +31,29 @@ export async function prepare(
   stdinText: string,
   cwd: string,
 ): Promise<Prepared> {
+  const sess = resolveSessionId(argv);
+  config.sessionId = sess.sessionId ?? "";
+
   let ndjsonMessages: string[] = [];
   if (config.inputFormat === "stream-json") {
     ndjsonMessages = parseNdjsonMessages(stdinText);
     config.message = ""; // multi-turn: driver must NOT auto-inject
   } else {
-    config.message = combineMessage(config.message, stdinText);
+    const combined = combineMessage(config.message, stdinText);
+    if (sess.mode === "resume" || sess.mode === "continue") {
+      // --resume / --continue are driven via injection, not auto-inject at spawn:
+      // drive() must first let the resumed TUI replay its history and settle, then
+      // submit this turn. Hand the message off as a single injected turn and clear
+      // config.message so startSession spawns in multi-turn mode (no auto-inject).
+      ndjsonMessages = combined ? [combined] : [];
+      config.message = "";
+    } else {
+      config.message = combined;
+    }
   }
 
-  const sess = resolveSessionId(argv);
-  config.sessionId = sess.sessionId ?? "";
-
-  // --continue forks a NEW transcript file: snapshot before spawn so drive() can
-  // detect the newly-appeared file to tail.
+  // --continue with no prior session forks a NEW transcript file: snapshot before
+  // spawn so drive()'s fallback discovery can detect the newly-appeared file.
   const preExisting =
     sess.mode === "continue" ? new Set(await listTranscripts(cwd)) : null;
 
