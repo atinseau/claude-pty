@@ -301,6 +301,8 @@ export interface Session {
    * whole tree so nothing is orphaned. Always use this instead of pty.kill().
    */
   kill: () => void;
+  /** False once the pty has exited (claude.exe died). Used to skip dead warm TUIs. */
+  alive: () => boolean;
 }
 
 /**
@@ -352,6 +354,13 @@ export function startSession(
   // any other spawn can overwrite the module global. Bind a writer to it so this
   // session always writes to its own pty even when the process drives several.
   const ptyWrite = makePtyWriter(pty, _lastConinFd);
+
+  // Track liveness so a warm pool TUI whose claude.exe has died is never handed
+  // out (injecting into a dead pty would just hang until the turn timeout).
+  let exited = false;
+  pty.onExit(() => {
+    exited = true;
+  });
 
   let buffer = "";
   // Trust dialog is accepted at most once, in the PRE-ready phase (before the
@@ -495,5 +504,6 @@ export function startSession(
     inject,
     promptBack: () => promptBackSeen,
     kill,
+    alive: () => !exited,
   };
 }

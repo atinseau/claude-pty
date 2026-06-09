@@ -13,7 +13,7 @@
 // Transport + detached-survival approach validated in spike-E-daemon-m0.md.
 
 import { spawn } from "child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { connect, createServer, type Socket } from "net";
 import { dirname } from "path";
 import { helpText, parseArgs } from "./cli";
@@ -28,11 +28,28 @@ import {
 } from "./ipc";
 import { WarmPool } from "./pool";
 import { prepare, turnTimeoutMs } from "./prepare";
-import { signatureOf } from "./signature";
+import { fnv1a, signatureOf } from "./signature";
 
-// Bump to invalidate daemons from older builds. M4 will derive this from the
-// real package version + the claude binary signature.
-const PROTOCOL_VERSION = "m2";
+/**
+ * Identity of THIS build, so a client never talks to a daemon from a different
+ * build (which would serve stale behaviour). Derived from the size+mtime of the
+ * running binary and the claude binary — both change on rebuild/upgrade — so a
+ * rebuilt client's probe sees a version mismatch and spawns a fresh daemon. The
+ * stale daemon then idles out. (The previous hard-coded "m2" never invalidated.)
+ */
+function buildSignature(): string {
+  const parts: string[] = [];
+  for (const p of [process.execPath, CLAUDE_BIN]) {
+    try {
+      const s = statSync(p);
+      parts.push(`${p}:${s.size}:${Math.floor(s.mtimeMs)}`);
+    } catch {
+      parts.push(`${p}:?`);
+    }
+  }
+  return fnv1a(parts.join("|"));
+}
+const PROTOCOL_VERSION = buildSignature();
 const IDLE_EXIT_MS = 5 * 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -112,20 +129,31 @@ export function runDaemon(): void {
     inflight.set(sig, (inflight.get(sig) ?? 0) + 1);
     onSpawn(); // a warm TUI is a real spawn — count it for the backstop
     const session = startSession(warmConfig, {}, { cwd, env });
-    const dec = () =>
+
+    // Settle exactly once: pool it if it reaches the prompt, else kill it. The
+    // timeout guards the case where the TUI dies or hangs BEFORE ready (the ready
+    // promise then never settles), which would otherwise leak inflight + process.
+    let settled = false;
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
       inflight.set(sig, Math.max(0, (inflight.get(sig) ?? 1) - 1));
+      action();
+    };
     session.ready
-      .then(() => {
-        pool.add({
-          sig,
-          sessionId,
-          bornAt: Date.now(),
-          kill: () => session.kill(),
-          value: session,
-        });
-      })
-      .catch(() => session.kill())
-      .finally(dec);
+      .then(() =>
+        settle(() =>
+          pool.add({
+            sig,
+            sessionId,
+            bornAt: Date.now(),
+            kill: () => session.kill(),
+            value: session,
+          }),
+        ),
+      )
+      .catch(() => settle(() => session.kill()));
+    setTimeout(() => settle(() => session.kill()), 20_000).unref?.();
   };
 
   const ensureWarm: DaemonCtx["ensureWarm"] = (sig, config, cwd, env) => {
@@ -240,7 +268,13 @@ async function handleConnection(
     // Poolable = a brand-new session (no --resume/--continue/--session-id): only
     // those can be served by an interchangeable pre-warmed TUI.
     const poolable = sess.mode === "new";
-    const warm = poolable ? ctx.pool.take(sig) : null;
+    // Take the first LIVE warm TUI for this signature; reap any that died while
+    // idle (injecting into a dead pty would hang until the turn timeout).
+    let warm = poolable ? ctx.pool.take(sig) : null;
+    while (warm && !warm.value.alive()) {
+      warm.kill();
+      warm = ctx.pool.take(sig);
+    }
 
     let ptyDone = false;
     let session: Session;
