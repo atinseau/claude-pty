@@ -33,8 +33,6 @@ import { makeTranscriptCursor } from "./tailer";
 import { countTerminalTurns, isTerminal, turnComplete } from "./turn";
 import type { TranscriptEvent } from "./types";
 
-const TURN_TIMEOUT_MS =
-  Number(process.env.CLAUDE_PTY_TURN_TIMEOUT_MS) || 600_000;
 // Transcript poll cadence. Kept small so the final assistant line — and, in
 // stream-json mode, each intermediate event — is picked up promptly once the
 // transcript flushes; the files involved are tiny so the re-read cost is trivial.
@@ -55,6 +53,10 @@ export interface DriveDeps {
   ndjsonMessages: string[];
   /** Reads the session's pty turn-done flag (set by the onTurnDone hook). */
   ptyDone: () => boolean;
+  /** Working directory whose project transcripts to tail (the CLIENT's cwd). */
+  cwd: string;
+  /** Hard per-run deadline in ms (from CLAUDE_PTY_TURN_TIMEOUT_MS, default 600000). */
+  turnTimeoutMs: number;
 }
 
 /**
@@ -76,11 +78,11 @@ export async function drive(
 
   async function locate(): Promise<string | null> {
     if (sess.sessionId) return findTranscriptById(sess.sessionId);
-    const current = await listTranscripts(process.cwd()); // continue mode
+    const current = await listTranscripts(deps.cwd); // continue mode
     return current.find((f) => !preExisting!.has(f)) ?? null;
   }
 
-  const deadline = Date.now() + TURN_TIMEOUT_MS;
+  const deadline = Date.now() + deps.turnTimeoutMs;
   let path: string | null = null;
   let sawTerminal = false;
 

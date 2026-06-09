@@ -1,50 +1,33 @@
 // src/main.ts
 
 import { helpText, parseArgs } from "./cli";
+import { runDaemon, runViaDaemon } from "./daemon";
 import { drive } from "./drive";
 import { startSession } from "./driver";
-import { parseNdjsonMessages } from "./ndjson";
-import { listTranscripts, resolveSessionId } from "./session";
-import { combineMessage, readStdin } from "./stdin";
+import { prepare, turnTimeoutMs } from "./prepare";
+import { readStdin } from "./stdin";
 
-async function main() {
-  const argv = Bun.argv.slice(2);
+/** Direct path: spawn the TUI in-process and drive it (the default, always-works route). */
+async function runDirect(argv: string[], stdinText: string): Promise<number> {
   let config: ReturnType<typeof parseArgs>;
   try {
     config = parseArgs(argv);
   } catch (e) {
     process.stderr.write((e instanceof Error ? e.message : String(e)) + "\n");
-    process.exit(2);
+    return 2;
   }
-
-  // --help / -h: print usage to stdout and exit 0 without driving the TUI.
   if (config.help) {
     process.stdout.write(helpText());
-    process.exit(0);
+    return 0;
   }
 
-  const stdinText = await readStdin();
-
-  // In stream-json input mode, stdin is NDJSON messages — do NOT combine with positional message.
-  // In text mode, combine positional + stdin text as before.
-  let ndjsonMessages: string[] = [];
-  if (config.inputFormat === "stream-json") {
-    ndjsonMessages = parseNdjsonMessages(stdinText);
-    config.message = ""; // multi-turn mode: driver must NOT auto-inject
-  } else {
-    config.message = combineMessage(config.message, stdinText);
-  }
-
-  const sess = resolveSessionId(argv);
-  // Single source of truth for the id the driver injects (fixes double-generation).
-  config.sessionId = sess.sessionId ?? "";
-
-  // --continue always forks a NEW transcript file (Spike C): snapshot before spawn
-  // so we can detect the newly-appeared file to tail.
-  const preExisting =
-    sess.mode === "continue"
-      ? new Set(await listTranscripts(process.cwd()))
-      : null;
+  const cwd = process.cwd();
+  const { sess, ndjsonMessages, preExisting } = await prepare(
+    config,
+    argv,
+    stdinText,
+    cwd,
+  );
 
   let ptyDone = false;
   const session = startSession(config, {
@@ -55,17 +38,47 @@ async function main() {
 
   // drive() owns the session lifecycle (it kills the single-use pty before
   // formatting output, as the previous inline flow did).
-  const code = await drive(
+  return drive(
     config,
     session,
-    { sess, preExisting, ndjsonMessages, ptyDone: () => ptyDone },
+    {
+      sess,
+      preExisting,
+      ndjsonMessages,
+      ptyDone: () => ptyDone,
+      cwd,
+      turnTimeoutMs: turnTimeoutMs(process.env),
+    },
     {
       out: (s) => process.stdout.write(s),
       err: (s) => process.stderr.write(s),
     },
   );
+}
 
-  process.exit(code);
+async function main() {
+  const argv = Bun.argv.slice(2);
+
+  // `--daemon`: become the daemon server (never returns). Handled before any
+  // arg parsing so it can't be confused with claude flags.
+  if (argv.includes("--daemon")) {
+    runDaemon();
+    return;
+  }
+
+  const stdinText = await readStdin();
+
+  // Daemon is OPT-IN (CLAUDE_PTY_DAEMON=1) and always overridable with
+  // --no-daemon. On any daemon failure runViaDaemon returns null and we fall
+  // through to the direct path — identical behaviour, never a hard failure.
+  const useDaemon =
+    process.env.CLAUDE_PTY_DAEMON === "1" && !argv.includes("--no-daemon");
+  if (useDaemon) {
+    const code = await runViaDaemon(argv, stdinText);
+    if (code !== null) process.exit(code);
+  }
+
+  process.exit(await runDirect(argv, stdinText));
 }
 
 main();

@@ -258,6 +258,27 @@ bun run build:all    # → ./dist/claude-pty-<os>-<arch>
 
 > **Heads-up: the binaries are not standalone.** `claude-pty` depends on **node-pty**, a native module whose code is *not* bundled into the compiled binary. At runtime the binary still needs `node_modules/node-pty/` (with the prebuild matching the host OS/arch) present in the run directory. Cross-compiled targets from `build:all` only run where the corresponding node-pty prebuild is installed — ship them alongside a matching `node_modules/node-pty/`.
 
+## Daemon mode (optional, opt-in)
+
+By default every `claude-pty` invocation spawns the TUI in-process (the *direct*
+path) — nothing changes unless you opt in.
+
+Set `CLAUDE_PTY_DAEMON=1` to route runs through a **background daemon** instead.
+The first run launches the daemon (the *same single binary*, just `claude-pty
+--daemon`, detached); subsequent runs connect to it over a loopback socket. The
+daemon drives the TUI on your behalf and streams `-p`-identical output back, so
+behaviour is unchanged. It idles out after a few minutes.
+
+- It is a **pure optimization with a hard fallback**: on *any* daemon problem the
+  client silently runs the direct path, so a run never fails because of the
+  daemon. Force the direct path per-run with `--no-daemon`.
+- The daemon is keyed to your build; a stale daemon from an older binary is
+  ignored. The endpoint lives at `~/.claude-pty/daemon.json` (loopback port +
+  token, `0600`).
+- Today (M2) the daemon spawns a fresh TUI per request, so it does not yet make a
+  single run faster — it is the foundation for a warm-TUI pool that removes the
+  TUI-startup cost on repeated calls.
+
 ## Limitations
 
 Honest about what the TUI-driven approach can and can't match:

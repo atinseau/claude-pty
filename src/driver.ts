@@ -71,7 +71,13 @@ const _nodePtyPath =
 const _require = createRequire(_nodePtyPath);
 
 // ─── Patch net.Socket to capture the conin fd (Windows Bun write fix) ────────
-let _coninFd: number | null = null;
+// node-pty creates the conin (write-to-shell) socket SYNCHRONOUSLY inside its
+// spawn(). This module global holds the fd captured by the most recent such
+// creation; startSession snapshots it immediately after _ptySpawn() returns so
+// EACH session gets ITS OWN conin fd. (A single module global would break the
+// moment one process drives more than one TUI — e.g. the daemon — because writes
+// for session #2 would target session #1's now-closed fd.)
+let _lastConinFd: number | null = null;
 
 if (process.platform === "win32") {
   const net = _require("net");
@@ -87,7 +93,7 @@ if (process.platform === "win32") {
       opts.readable === false &&
       opts.writable === true
     ) {
-      _coninFd = opts.fd;
+      _lastConinFd = opts.fd;
     }
     return new OrigSocket(opts);
   };
@@ -100,13 +106,19 @@ const { spawn: _ptySpawn } = _require(
 ) as typeof import("node-pty");
 const { writeSync: _fsWriteSync } = _require("fs") as typeof import("fs");
 
-/** Write to the pty — uses fs.writeSync on Windows due to Bun net.Socket bug. */
-function ptyWrite(pty: IPty, data: string): void {
-  if (process.platform === "win32" && _coninFd !== null) {
-    _fsWriteSync(_coninFd, data);
-  } else {
-    pty.write(data);
-  }
+/**
+ * Build a per-session writer bound to THIS pty's captured conin fd. On Windows
+ * uses fs.writeSync(coninFd) due to the Bun net.Socket write bug; elsewhere
+ * delegates to pty.write.
+ */
+function makePtyWriter(pty: IPty, coninFd: number | null) {
+  return (data: string): void => {
+    if (process.platform === "win32" && coninFd !== null) {
+      _fsWriteSync(coninFd, data);
+    } else {
+      pty.write(data);
+    }
+  };
 }
 
 const CLAUDE_BIN =
@@ -293,7 +305,17 @@ export interface Session {
  *   Does NOT auto-inject. Caller awaits session.ready, then calls session.inject()
  *   for each message, sequencing turns off the transcript + promptBack().
  */
-export function startSession(config: Config, hooks: DriverHooks = {}): Session {
+/** Per-spawn context. Lets the daemon run the TUI in the CLIENT's cwd/env rather than its own. */
+export interface SpawnContext {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export function startSession(
+  config: Config,
+  hooks: DriverHooks = {},
+  ctx: SpawnContext = {},
+): Session {
   // Build args: skip --session-id injection when passthrough already has a
   // session flag, or when --resume/--continue is in use, or sessionId is empty.
   const hasSessionFlag =
@@ -311,9 +333,13 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
   const pty: IPty = _ptySpawn(CLAUDE_BIN, args, {
     cols: 120,
     rows: 40,
-    cwd: process.cwd(),
-    env: childEnv(),
+    cwd: ctx.cwd ?? process.cwd(),
+    env: childEnv(ctx.env ?? process.env),
   });
+  // Snapshot the conin fd captured during the (synchronous) spawn above, BEFORE
+  // any other spawn can overwrite the module global. Bind a writer to it so this
+  // session always writes to its own pty even when the process drives several.
+  const ptyWrite = makePtyWriter(pty, _lastConinFd);
 
   let buffer = "";
   // Trust dialog is accepted at most once, in the PRE-ready phase (before the
@@ -360,7 +386,7 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     // frame's ready signal is detected cleanly.
     if (!trustAccepted && !injected && isTrustPrompt(buffer)) {
       trustAccepted = true;
-      ptyWrite(pty, TRUST_ACCEPT_KEYSTROKE);
+      ptyWrite(TRUST_ACCEPT_KEYSTROKE);
       buffer = "";
       return;
     }
@@ -374,7 +400,7 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
       if (!multiTurnMode) {
         // Single-turn: auto-inject the message after a short render-settle delay.
         setTimeout(() => {
-          ptyWrite(pty, config.message + "\r");
+          ptyWrite(config.message + "\r");
           buffer = ""; // reset so the post-turn ready check starts clean
           awaitingTurn = true;
         }, INJECT_RENDER_DELAY_MS);
@@ -390,7 +416,7 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
       const marker = buffer.slice(-300);
       if (marker !== lastDeniedBox) {
         lastDeniedBox = marker;
-        ptyWrite(pty, DENY_KEYSTROKE);
+        ptyWrite(DENY_KEYSTROKE);
       }
     }
 
@@ -424,7 +450,7 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     awaitingTurn = true;
     turnDone = false;
     promptBackSeen = false;
-    ptyWrite(pty, message + "\r");
+    ptyWrite(message + "\r");
   }
 
   return {
