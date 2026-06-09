@@ -18,20 +18,15 @@ import {
 import { combineMessage, readStdin } from "./stdin";
 import { extractJson, validateAgainstSchema } from "./structured";
 import { makeTranscriptCursor } from "./tailer";
+import { isTerminal, turnComplete } from "./turn";
 import type { TranscriptEvent } from "./types";
 
 const TURN_TIMEOUT_MS =
   Number(process.env.CLAUDE_PTY_TURN_TIMEOUT_MS) || 600_000;
-const POLL_MS = 120;
-
-function isTerminal(events: TranscriptEvent[]): boolean {
-  const a = events.filter(
-    (e): e is Extract<TranscriptEvent, { kind: "assistant" }> =>
-      e.kind === "assistant",
-  );
-  const last = a[a.length - 1];
-  return !!last && last.stop_reason !== "tool_use" && last.stop_reason !== null;
-}
+// Transcript poll cadence. Kept small so the final assistant line — and, in
+// stream-json mode, each intermediate event — is picked up promptly once the
+// transcript flushes; the files involved are tiny so the re-read cost is trivial.
+const POLL_MS = 40;
 
 async function main() {
   const argv = Bun.argv.slice(2);
@@ -165,7 +160,10 @@ async function main() {
         }
         sawTerminal = isTerminal(collected);
       }
-      if (ptyDone && sawTerminal) break;
+      // Transcript-driven completion: stop as soon as the transcript shows a
+      // terminal turn (no need to also wait out the pty debounce). ptyDone is
+      // kept as a fallback only when the transcript is empty (error states).
+      if (turnComplete(sawTerminal, ptyDone, collected.length)) break;
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
   }

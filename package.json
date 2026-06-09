@@ -12,7 +12,8 @@
     "check-types": "tsc --noEmit",
     "test": "bun test",
     "build": "bun build src/main.ts --compile --outfile claude-pty.exe",
-    "build:all": "bun run scripts/build-all.ts"
+    "build:all": "bun run scripts/build-all.ts",
+    "bench": "bun run scripts/bench.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
