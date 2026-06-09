@@ -1,6 +1,10 @@
 // tests/session.test.ts
 import { expect, test } from "bun:test";
-import { projectDirName, resolveSessionId } from "../../src/store/locate";
+import {
+  pickMostRecent,
+  projectDirName,
+  resolveSessionId,
+} from "../../src/store/locate";
 
 test("projectDirName mirrors Claude Code's cwd transform", () => {
   expect(projectDirName("C:\\Users\\arthur\\Documents\\Devs\\claude-pty")).toBe(
@@ -30,4 +34,25 @@ test("--continue marks discovery mode with unknown id", () => {
   expect(r.sessionId).toBe(null);
   expect(r.injectSessionId).toBe(false);
   expect(r.mode).toBe("continue");
+});
+
+test("pickMostRecent returns the path with the greatest mtime", () => {
+  expect(
+    pickMostRecent([
+      { path: "a.jsonl", mtimeMs: 100 },
+      { path: "b.jsonl", mtimeMs: 300 },
+      { path: "c.jsonl", mtimeMs: 200 },
+    ]),
+  ).toBe("b.jsonl");
+});
+test("pickMostRecent returns null for an empty list", () => {
+  expect(pickMostRecent([])).toBe(null);
+});
+test("pickMostRecent keeps the first entry on an mtime tie (stable)", () => {
+  expect(
+    pickMostRecent([
+      { path: "first.jsonl", mtimeMs: 500 },
+      { path: "second.jsonl", mtimeMs: 500 },
+    ]),
+  ).toBe("first.jsonl");
 });

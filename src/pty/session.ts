@@ -38,6 +38,16 @@ const TURN_DONE_DEBOUNCE_MS = 800;
  */
 const INJECT_RENDER_DELAY_MS = 25;
 
+/**
+ * Gap between writing the message text and writing the Enter (carriage return)
+ * in inject(). The Enter MUST be a separate write a short moment after the text:
+ * when the two are sent as one "message\r" write, the interactive TUI — most
+ * notably while it is still settling after a --resume history replay — drops the
+ * Enter and the turn never submits (the text just sits in the input box). Sending
+ * \r on its own, after the typed text has landed, submits reliably.
+ */
+const INJECT_ENTER_GAP_MS = 80;
+
 const OUTPUT_CAP = 65536;
 
 export interface DriverHooks {
@@ -65,6 +75,12 @@ export interface Session {
    * TUI is ready to receive the next message. Reset by inject().
    */
   promptBack: () => boolean;
+  /**
+   * Milliseconds since the last byte arrived from the pty. Lets a caller wait for
+   * a quiet stream — e.g. drive() holds the --resume injection until the TUI has
+   * finished replaying the prior conversation.
+   */
+  msSinceData: () => number;
   /**
    * Terminate the TUI and its ENTIRE process tree. On Windows the claude TUI
    * spawns its own console subprocesses (MCP servers, hooks); `pty.kill()` alone
@@ -154,6 +170,10 @@ export function startSession(
   let lastDeniedBox = "";
 
   let outputLog = "";
+  // Timestamp of the most recent pty data, so callers can detect a quiet stream
+  // (e.g. drive() waits for the --resume history replay to finish before it
+  // injects). Initialised to spawn time; updated on every onData.
+  let lastDataAt = Date.now();
 
   // ─── Ready promise (resolves when TUI prompt first appears) ──────────────
   let _readyResolve: (() => void) | null = null;
@@ -164,6 +184,7 @@ export function startSession(
   const multiTurnMode = config.message === "";
 
   pty.onData((data: string) => {
+    lastDataAt = Date.now();
     buffer += data;
     if (buffer.length > BUFFER_CAP) buffer = buffer.slice(-BUFFER_CAP);
     outputLog += data;
@@ -236,13 +257,20 @@ export function startSession(
    * Multi-turn inject: write a message to the TUI (fire-and-forget). Resets the
    * promptBack latch so the caller can detect when THIS turn's prompt returns.
    * Turn completion is observed by the caller from the transcript.
+   *
+   * The Enter is sent as a SEPARATE write a short moment after the text (see
+   * INJECT_ENTER_GAP_MS): a combined "message\r" write is dropped by the TUI when
+   * it is still settling (e.g. right after a --resume history replay), leaving the
+   * text un-submitted. Writing \r on its own once the text has landed submits
+   * reliably, for fresh and resumed sessions alike.
    */
   function inject(message: string): void {
     buffer = ""; // clear so a leftover ❯ from the previous turn isn't mistaken for this one
     awaitingTurn = true;
     turnDone = false;
     promptBackSeen = false;
-    ptyWrite(message + "\r");
+    ptyWrite(message);
+    setTimeout(() => ptyWrite("\r"), INJECT_ENTER_GAP_MS);
   }
 
   function kill(): void {
@@ -274,6 +302,7 @@ export function startSession(
     ready: readyPromise,
     inject,
     promptBack: () => promptBackSeen,
+    msSinceData: () => Date.now() - lastDataAt,
     kill,
     alive: () => !exited,
   };

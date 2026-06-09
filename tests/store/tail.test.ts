@@ -53,3 +53,31 @@ test("tail handles multi-byte UTF-8 across the read boundary", async () => {
   await appendFile(path, "\n");
   expect((await tail.poll(path)).map((e) => e.kind)).toEqual(["user"]);
 });
+
+test("prime() skips existing content so only later appends are returned", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cp-tail-"));
+  const path = join(dir, "t.jsonl");
+  // Two prior turns already on disk (a resumed conversation).
+  writeFileSync(path, `${USER}\n${ASST}\n`);
+  const tail = makeTranscriptTail();
+
+  await tail.prime(path); // skip the inherited turns
+  expect(await tail.poll(path)).toEqual([]); // nothing inherited comes back
+  // The fresh turn appended after priming is the only thing returned.
+  await appendFile(path, `${USER}\n${ASST}\n`);
+  expect((await tail.poll(path)).map((e) => e.kind)).toEqual([
+    "user",
+    "assistant",
+  ]);
+});
+
+test("prime() on a missing file is a no-op (offset stays at 0)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cp-tail-"));
+  const path = join(dir, "later.jsonl");
+  const tail = makeTranscriptTail();
+
+  await tail.prime(path); // file doesn't exist yet
+  // When the file later appears, poll reads it from the very start.
+  writeFileSync(path, `${USER}\n`);
+  expect((await tail.poll(path)).map((e) => e.kind)).toEqual(["user"]);
+});

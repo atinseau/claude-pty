@@ -1,4 +1,5 @@
 // src/session.ts
+import { stat } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -57,4 +58,30 @@ export async function listTranscripts(cwd: string): Promise<string[]> {
     // Project dir doesn't exist yet (first session in this cwd) — return empty.
   }
   return out;
+}
+
+/** Pure: pick the path with the greatest mtime (first wins on a tie); null if empty. */
+export function pickMostRecent(
+  entries: { path: string; mtimeMs: number }[],
+): string | null {
+  let best: { path: string; mtimeMs: number } | null = null;
+  for (const e of entries) {
+    if (!best || e.mtimeMs > best.mtimeMs) best = e;
+  }
+  return best?.path ?? null;
+}
+
+/**
+ * The most recently modified transcript in a cwd's project dir, or null if none.
+ * This is the session that `claude --continue` resumes, so it is the file whose
+ * appended turn drive() must tail.
+ */
+export async function mostRecentTranscript(
+  cwd: string,
+): Promise<string | null> {
+  const files = await listTranscripts(cwd);
+  const entries = await Promise.all(
+    files.map(async (path) => ({ path, mtimeMs: (await stat(path)).mtimeMs })),
+  );
+  return pickMostRecent(entries);
 }
