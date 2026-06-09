@@ -13,7 +13,9 @@ function assistantLine(
       model: e.model,
       content: e.content,
       stop_reason: e.stop_reason,
-      usage: e.usage,
+      // The rich usage object verbatim from the transcript (server_tool_use,
+      // service_tier, cache_creation, …), matching `claude -p`'s stream-json.
+      usage: Object.keys(e.rawUsage).length ? e.rawUsage : e.usage,
     },
   });
 }
