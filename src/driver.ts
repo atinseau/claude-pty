@@ -48,17 +48,22 @@
 import { existsSync } from "fs";
 import { createRequire } from "module";
 import type { IPty } from "node-pty";
+import { dirname } from "path";
 import type { Config } from "./cli";
 
 // node-pty must be loaded via createRequire (not a static import) so the
 // net.Socket patch below runs first. The createRequire base must point at a
-// real on-disk node-pty entry. Two deployment shapes need to work:
+// real on-disk node-pty entry. Three deployment shapes need to work:
 //   - `bun run src/main.ts`  → node-pty is at <source>/../node_modules (import.meta.dir).
-//   - compiled `claude-pty.exe` → import.meta.dir is Bun's virtual B:\~BUN path,
-//     which has no node_modules; the binary resolves from the real CWD instead.
-// Try each candidate and use the first that exists on disk.
+//   - installed release binary → node-pty is bundled next to the executable,
+//     found via dirname(process.execPath)/node_modules (release archives ship
+//     claude-pty + node_modules/node-pty in the same directory).
+//   - compiled binary run from a project dir → falls back to the real CWD.
+// (import.meta.dir is Bun's virtual B:\~BUN path inside a compiled binary, so it
+// only matches in dev.) Try each candidate and use the first that exists on disk.
 const _nodePtyCandidates = [
   import.meta.dir + "/../node_modules/node-pty/lib/index.js",
+  dirname(process.execPath) + "/node_modules/node-pty/lib/index.js",
   process.cwd() + "/node_modules/node-pty/lib/index.js",
 ];
 const _nodePtyPath =
