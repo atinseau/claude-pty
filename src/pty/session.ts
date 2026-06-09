@@ -32,19 +32,28 @@ const BUFFER_CAP = 16384;
 const TURN_DONE_DEBOUNCE_MS = 800;
 
 /**
- * Settling delay between the first prompt-ready signal and injecting the
- * message. Lets the TUI finish painting its input box so the keystrokes land in
- * a stable prompt. Verified reliable at this value against Claude Code 2.1.169.
+ * Before injecting, wait until the pty output stream has been quiet this long —
+ * i.e. the TUI has finished painting (startup welcome frame, a --resume history
+ * replay, an MCP-warning banner, …) and the input box is live. A FIXED short
+ * delay is not enough: when the startup render runs long, keystrokes typed into
+ * a still-settling box are mishandled and the turn never submits. Waiting for an
+ * actual quiet window adapts to however long the render takes.
  */
-const INJECT_RENDER_DELAY_MS = 25;
+const INJECT_SETTLE_QUIET_MS = 400;
+
+/** Hard cap on the settle wait, so a perpetually-noisy TUI still gets injected. */
+const INJECT_SETTLE_MAX_MS = 10_000;
+
+/** Poll cadence while waiting for the settle window. */
+const INJECT_SETTLE_POLL_MS = 40;
 
 /**
- * Gap between writing the message text and writing the Enter (carriage return)
- * in inject(). The Enter MUST be a separate write a short moment after the text:
- * when the two are sent as one "message\r" write, the interactive TUI — most
- * notably while it is still settling after a --resume history replay — drops the
- * Enter and the turn never submits (the text just sits in the input box). Sending
- * \r on its own, after the typed text has landed, submits reliably.
+ * Gap between writing the message text and writing the Enter (carriage return).
+ * The Enter MUST be a separate write a short moment after the text: when the two
+ * are sent as one "message\r" write, the interactive TUI — most notably while it
+ * is still settling after startup or a --resume history replay — drops the Enter
+ * and the turn never submits (the text just sits in the input box). Sending \r on
+ * its own, after the typed text has landed, submits reliably.
  */
 const INJECT_ENTER_GAP_MS = 80;
 
@@ -211,12 +220,10 @@ export function startSession(
       _readyResolve = null;
 
       if (!multiTurnMode) {
-        // Single-turn: auto-inject the message after a short render-settle delay.
-        setTimeout(() => {
-          ptyWrite(config.message + "\r");
-          buffer = ""; // reset so the post-turn ready check starts clean
-          awaitingTurn = true;
-        }, INJECT_RENDER_DELAY_MS);
+        // Single-turn: auto-inject the message once the TUI settles (same robust
+        // submit path as multi-turn inject() — settle for quiet, then text, then
+        // a separated Enter).
+        typeAndSubmit(config.message);
       }
       // In multi-turn mode: do NOT auto-inject; caller will call inject().
       return;
@@ -253,24 +260,42 @@ export function startSession(
     }
   });
 
+  /** Run `action` once the pty stream has been quiet for INJECT_SETTLE_QUIET_MS (or the cap elapses). */
+  function whenQuiet(action: () => void): void {
+    const start = Date.now();
+    const tick = () => {
+      const quietEnough = Date.now() - lastDataAt >= INJECT_SETTLE_QUIET_MS;
+      const cappedOut = Date.now() - start >= INJECT_SETTLE_MAX_MS;
+      if (quietEnough || cappedOut) action();
+      else setTimeout(tick, INJECT_SETTLE_POLL_MS);
+    };
+    tick();
+  }
+
   /**
-   * Multi-turn inject: write a message to the TUI (fire-and-forget). Resets the
-   * promptBack latch so the caller can detect when THIS turn's prompt returns.
-   * Turn completion is observed by the caller from the transcript.
-   *
-   * The Enter is sent as a SEPARATE write a short moment after the text (see
-   * INJECT_ENTER_GAP_MS): a combined "message\r" write is dropped by the TUI when
-   * it is still settling (e.g. right after a --resume history replay), leaving the
-   * text un-submitted. Writing \r on its own once the text has landed submits
-   * reliably, for fresh and resumed sessions alike.
+   * The robust submit used by BOTH the single-turn auto-inject and multi-turn
+   * inject(): wait for the TUI to settle, clear the buffer, type the text, then
+   * send Enter as a SEPARATE write (see the constants above for why both the
+   * settle and the separated Enter are required). Fire-and-forget.
+   */
+  function typeAndSubmit(message: string): void {
+    whenQuiet(() => {
+      buffer = ""; // reset so the post-turn ready check starts clean
+      awaitingTurn = true;
+      ptyWrite(message);
+      setTimeout(() => ptyWrite("\r"), INJECT_ENTER_GAP_MS);
+    });
+  }
+
+  /**
+   * Multi-turn inject: submit a message to the TUI (fire-and-forget). Resets the
+   * turn latches so the caller can detect when THIS turn's prompt returns, then
+   * defers to typeAndSubmit (settle + separated Enter).
    */
   function inject(message: string): void {
-    buffer = ""; // clear so a leftover ❯ from the previous turn isn't mistaken for this one
-    awaitingTurn = true;
     turnDone = false;
     promptBackSeen = false;
-    ptyWrite(message);
-    setTimeout(() => ptyWrite("\r"), INJECT_ENTER_GAP_MS);
+    typeAndSubmit(message);
   }
 
   function kill(): void {
