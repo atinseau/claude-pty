@@ -266,10 +266,32 @@ async function probe(ep: Endpoint): Promise<boolean> {
 
 function spawnDaemonDetached(): void {
   const { cmd, args } = selfCmd(["--daemon"]);
+
+  if (process.platform === "win32") {
+    // Launch the daemon with a HIDDEN CONSOLE, not as a console-less detached
+    // process. A console-less daemon makes every console subprocess it (or its
+    // descendants — node-pty's agent forks, claude's MCP servers and hooks)
+    // spawns pop its own briefly-visible console window. Giving the daemon one
+    // hidden console that they all inherit eliminates the flashing (mirroring the
+    // direct path, where everything shares the user's existing console).
+    // PowerShell Start-Process -WindowStyle Hidden is the reliable way to get
+    // that; the launcher PowerShell itself is hidden via windowsHide.
+    const psArgList = args.map((a) => `'${a.replace(/'/g, "''")}'`).join(",");
+    const psCmd =
+      `Start-Process -FilePath '${cmd.replace(/'/g, "''")}' -WindowStyle Hidden` +
+      (args.length ? ` -ArgumentList ${psArgList}` : "");
+    const ps = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", psCmd],
+      { windowsHide: true, stdio: "ignore" },
+    );
+    ps.unref();
+    return;
+  }
+
   const child = spawn(cmd, args, {
     detached: true,
     stdio: "ignore",
-    windowsHide: true,
   });
   child.unref();
 }
