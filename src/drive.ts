@@ -57,6 +57,14 @@ export interface DriveDeps {
   cwd: string;
   /** Hard per-run deadline in ms (from CLAUDE_PTY_TURN_TIMEOUT_MS, default 600000). */
   turnTimeoutMs: number;
+  /**
+   * Force the explicit-inject (multi-turn) drive path even for text input. Set
+   * when driving a WARM pool TUI: it was spawned in multi-turn mode and idles at
+   * the prompt, so the message(s) — supplied via ndjsonMessages — must be
+   * injected explicitly rather than auto-injected at spawn. No effect on the
+   * cold path (left false).
+   */
+  forceInject?: boolean;
 }
 
 /**
@@ -94,9 +102,9 @@ export async function drive(
     for (const line of emitter.initEarly(initModel)) sink.out(line + "\n");
   }
 
-  if (config.inputFormat === "stream-json") {
-    // ─── Multi-turn: inject each message, drive turn completion from the
-    // transcript (B), gating the next inject on promptBack().
+  if (config.inputFormat === "stream-json" || deps.forceInject) {
+    // ─── Multi-turn / warm path: inject each message, drive turn completion from
+    // the transcript (B), gating the next inject on promptBack().
     await session.ready;
     emitInitEarly();
 

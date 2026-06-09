@@ -275,9 +275,25 @@ behaviour is unchanged. It idles out after a few minutes.
 - The daemon is keyed to your build; a stale daemon from an older binary is
   ignored. The endpoint lives at `~/.claude-pty/daemon.json` (loopback port +
   token, `0600`).
-- Today (M2) the daemon spawns a fresh TUI per request, so it does not yet make a
-  single run faster — it is the foundation for a warm-TUI pool that removes the
-  TUI-startup cost on repeated calls.
+
+### Warm pool (the speedup)
+
+The daemon keeps a small pool of **pre-started TUIs**, already booted to the
+prompt, keyed by a signature (cwd + claude-affecting flags + relevant env). A
+repeated request with the same signature is served by a warm TUI, skipping the
+~650&nbsp;ms TUI-startup cost — measured **~660&nbsp;ms faster** per call once warm.
+The first call of a signature is still cold (and triggers warming in the
+background); subsequent same-signature calls are warm. Requests using
+`--resume`/`--continue`/`--session-id` always spawn fresh (a warm TUI can't stand
+in for a specific session).
+
+A warm TUI costs ~250&nbsp;MB of RAM while idle, so the pool is bounded. Tune via:
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `CLAUDE_PTY_WARM` | `1` | Warm TUIs kept ready **per signature** (`0` disables pooling) |
+| `CLAUDE_PTY_WARM_MAX` | `4` | Hard cap on **total** warm TUIs (oldest evicted past this) |
+| `CLAUDE_PTY_WARM_TTL_MS` | `600000` | A warm TUI older than this is discarded |
 
 ## Limitations
 

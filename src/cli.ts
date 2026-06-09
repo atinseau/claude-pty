@@ -101,6 +101,11 @@ ENVIRONMENT
                               (opt-in, default off). Falls back to the direct
                               path on any daemon error. Override per-run with
                               --no-daemon.
+  CLAUDE_PTY_WARM             Warm TUIs kept ready per signature (default 1; 0
+                              disables the pool). Removes the TUI-startup cost on
+                              repeated same-signature daemon runs.
+  CLAUDE_PTY_WARM_MAX         Hard cap on total warm TUIs (default 4).
+  CLAUDE_PTY_WARM_TTL_MS      Discard a warm TUI older than this (default 600000).
 
 EXIT CODES
   0  success

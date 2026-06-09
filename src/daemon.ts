@@ -18,7 +18,7 @@ import { connect, createServer, type Socket } from "net";
 import { dirname } from "path";
 import { helpText, parseArgs } from "./cli";
 import { drive } from "./drive";
-import { startSession } from "./driver";
+import { CLAUDE_BIN, type Session, startSession } from "./driver";
 import {
   createFrameDecoder,
   type Endpoint,
@@ -26,13 +26,34 @@ import {
   endpointPath,
   randomToken,
 } from "./ipc";
+import { WarmPool } from "./pool";
 import { prepare, turnTimeoutMs } from "./prepare";
+import { signatureOf } from "./signature";
 
 // Bump to invalidate daemons from older builds. M4 will derive this from the
 // real package version + the claude binary signature.
 const PROTOCOL_VERSION = "m2";
 const IDLE_EXIT_MS = 5 * 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Warm-pool tuning (read from the daemon's env at startup).
+const WARM_TARGET = Number(process.env.CLAUDE_PTY_WARM ?? "1"); // per signature
+const WARM_MAX = Number(process.env.CLAUDE_PTY_WARM_MAX ?? "4"); // total cap
+const WARM_TTL_MS = Number(
+  process.env.CLAUDE_PTY_WARM_TTL_MS ?? String(10 * 60_000),
+);
+
+/** Everything handleConnection needs from the daemon: pool, warming, breaker. */
+interface DaemonCtx {
+  pool: WarmPool<Session>;
+  onSpawn: () => void;
+  ensureWarm: (
+    sig: string,
+    config: ReturnType<typeof parseArgs>,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ) => void;
+}
 
 // ─── Daemon (server) ───────────────────────────────────────────────────────────
 
@@ -65,10 +86,59 @@ export function runDaemon(): void {
     }
   };
 
+  // ─── Warm pool: pre-started TUIs keyed by signature (the M3 speedup) ─────────
+  const pool = new WarmPool<Session>({
+    max: WARM_MAX,
+    ttlMs: WARM_TTL_MS,
+    now: () => Date.now(),
+  });
+  const inflight = new Map<string, number>(); // warm spawns in progress per sig
+  const inflightTotal = () => {
+    let n = 0;
+    for (const v of inflight.values()) n += v;
+    return n;
+  };
+
+  /** Spawn ONE warm TUI for `sig` (multi-turn, idling at the prompt) in background. */
+  const warmOne = (
+    sig: string,
+    config: ReturnType<typeof parseArgs>,
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ): void => {
+    if (pool.size() + inflightTotal() >= WARM_MAX) return;
+    const sessionId = crypto.randomUUID();
+    const warmConfig = { ...config, message: "", sessionId };
+    inflight.set(sig, (inflight.get(sig) ?? 0) + 1);
+    onSpawn(); // a warm TUI is a real spawn — count it for the backstop
+    const session = startSession(warmConfig, {}, { cwd, env });
+    const dec = () =>
+      inflight.set(sig, Math.max(0, (inflight.get(sig) ?? 1) - 1));
+    session.ready
+      .then(() => {
+        pool.add({
+          sig,
+          sessionId,
+          bornAt: Date.now(),
+          kill: () => session.kill(),
+          value: session,
+        });
+      })
+      .catch(() => session.kill())
+      .finally(dec);
+  };
+
+  const ensureWarm: DaemonCtx["ensureWarm"] = (sig, config, cwd, env) => {
+    const have = pool.countFor(sig) + (inflight.get(sig) ?? 0);
+    for (let i = have; i < WARM_TARGET; i++) warmOne(sig, config, cwd, env);
+  };
+
+  const ctx: DaemonCtx = { pool, onSpawn, ensureWarm };
+
   const server = createServer((sock) => {
     active++;
     lastActivity = Date.now();
-    handleConnection(sock, token, onSpawn).finally(() => {
+    handleConnection(sock, token, ctx).finally(() => {
       active--;
       lastActivity = Date.now();
     });
@@ -91,8 +161,10 @@ export function runDaemon(): void {
   // Idle self-exit: if nothing has happened for IDLE_EXIT_MS and no request is
   // in flight, remove our endpoint file and exit.
   const idle = setInterval(() => {
+    pool.evictExpired(); // reap stale warm TUIs even under steady idle
     if (active === 0 && Date.now() - lastActivity > IDLE_EXIT_MS) {
       try {
+        pool.clear(); // kill all warm TUIs before exiting
         rmSync(endpointPath(), { force: true });
       } catch {
         /* ignore */
@@ -106,7 +178,7 @@ export function runDaemon(): void {
 async function handleConnection(
   sock: Socket,
   token: string,
-  onSpawn: () => void,
+  ctx: DaemonCtx,
 ): Promise<void> {
   sock.setEncoding("utf8");
   const dec = createFrameDecoder();
@@ -152,8 +224,6 @@ async function handleConnection(
       return;
     }
 
-    onSpawn(); // count this real request for the fork-bomb backstop
-
     const { sess, ndjsonMessages, preExisting } = await prepare(
       config,
       argv,
@@ -161,31 +231,71 @@ async function handleConnection(
       cwd,
     );
 
+    const sig = signatureOf({
+      cwd,
+      bin: CLAUDE_BIN,
+      passthrough: config.passthrough,
+      env,
+    });
+    // Poolable = a brand-new session (no --resume/--continue/--session-id): only
+    // those can be served by an interchangeable pre-warmed TUI.
+    const poolable = sess.mode === "new";
+    const warm = poolable ? ctx.pool.take(sig) : null;
+
     let ptyDone = false;
-    const session = startSession(
-      config,
-      { onTurnDone: () => (ptyDone = true) },
-      { cwd, env },
-    );
+    let session: Session;
+    let driveDeps: Parameters<typeof drive>[2];
+
+    if (warm) {
+      // WARM PATH: drive the pre-started, idling TUI. It was spawned multi-turn
+      // with its own session id, so inject explicitly (forceInject) and tail that
+      // id's transcript. No new TUI spawned ⇒ not counted by the backstop.
+      session = warm.value;
+      const messages =
+        config.inputFormat === "stream-json"
+          ? ndjsonMessages
+          : [config.message];
+      driveDeps = {
+        sess: {
+          sessionId: warm.sessionId,
+          injectSessionId: false,
+          mode: "explicit",
+        },
+        preExisting: null,
+        ndjsonMessages: messages,
+        ptyDone: () => false,
+        cwd,
+        turnTimeoutMs: turnTimeoutMs(env),
+        forceInject: true,
+      };
+    } else {
+      // COLD PATH: spawn a fresh TUI (M2 behaviour).
+      ctx.onSpawn();
+      session = startSession(
+        config,
+        { onTurnDone: () => (ptyDone = true) },
+        { cwd, env },
+      );
+      driveDeps = {
+        sess,
+        preExisting,
+        ndjsonMessages,
+        ptyDone: () => ptyDone,
+        cwd,
+        turnTimeoutMs: turnTimeoutMs(env),
+      };
+    }
+
     let code = 1;
     try {
-      code = await drive(
-        config,
-        session,
-        {
-          sess,
-          preExisting,
-          ndjsonMessages,
-          ptyDone: () => ptyDone,
-          cwd,
-          turnTimeoutMs: turnTimeoutMs(env),
-        },
-        { out, err },
-      );
+      code = await drive(config, session, driveDeps, { out, err });
     } finally {
       // drive() kills on its normal path; this guarantees the claude.exe tree is
       // reaped even if drive() threw, so the long-lived daemon never orphans a TUI.
       session.kill();
+      // Refill the pool for this signature so the NEXT same-signature request is
+      // warm (this is what removes the ~659ms spawn→ready on repeated calls).
+      if (poolable) ctx.ensureWarm(sig, config, cwd, env);
     }
     await finish(code);
   } catch (e) {
