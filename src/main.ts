@@ -110,8 +110,14 @@ async function main() {
       allTurnsDone = true;
     };
 
-    // Run both concurrently and wait for the poll loop to drain.
-    await Promise.all([injectMessages(), pollLoop()]);
+    // Run both concurrently; bound by the global deadline so a turn that never
+    // completes (TUI hang) can't make injectMessages await forever past the
+    // timeout. pollLoop already self-bounds on the deadline; this guards the
+    // inject side too.
+    const deadlineGuard = new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.max(0, deadline - Date.now())),
+    );
+    await Promise.race([Promise.all([injectMessages(), pollLoop()]), deadlineGuard]);
 
   } else {
     // ─── Single-turn path (unchanged) ──────────────────────────────────────────
