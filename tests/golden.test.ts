@@ -205,6 +205,29 @@ test("-p flag causes non-zero exit", async () => {
   expect(code).not.toBe(0);
 });
 
+// Non-e2e: --help prints usage to stdout and exits 0 without driving the TUI.
+test("--help prints usage and exits 0", async () => {
+  const p = Bun.spawn(["bun", "run", "src/main.ts", "--help"], {
+    // Short deadline so an unimplemented path can't hang the test on the TUI.
+    env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "4000" },
+  });
+  const out = await new Response(p.stdout).text();
+  const code = await p.exited;
+  expect(code).toBe(0);
+  expect(out).toContain("claude-pty");
+  expect(out).toContain("USAGE");
+});
+
+test("-h prints usage and exits 0", async () => {
+  const p = Bun.spawn(["bun", "run", "src/main.ts", "-h"], {
+    env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "4000" },
+  });
+  const out = await new Response(p.stdout).text();
+  const code = await p.exited;
+  expect(code).toBe(0);
+  expect(out).toContain("USAGE");
+});
+
 test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")(
   "--input-format stream-json injects multiple turns",
   async () => {

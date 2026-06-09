@@ -156,6 +156,9 @@ Prerequisites:
 ## Usage
 
 ```bash
+# Show usage for claude-pty's own flags (does not drive the TUI)
+claude-pty --help
+
 # Plain text (default) — prints the final assistant message
 claude-pty "What does this project do?"
 
@@ -207,6 +210,7 @@ Useful env vars:
 | `--json-schema` structured output | ✅ via an injected system prompt (approximation — see [Limitations](#limitations)) |
 | `--model`, `--system-prompt`, `--append-system-prompt`, `--allowedTools`, … | ✅ passed through |
 | `--print` / `-p` | ⛔ rejected by design (`claude-pty` replaces it) |
+| `-h` / `--help` | ✅ prints `claude-pty`'s own usage and exits 0 (does not drive the TUI) |
 | `--include-partial-messages` (token deltas) | ❌ not reconstructable from the transcript |
 
 ## Architecture
@@ -215,7 +219,7 @@ Small, single-responsibility modules with well-defined interfaces:
 
 | Module | Responsibility |
 | --- | --- |
-| `src/cli.ts` | Parse argv → `Config`; classify consumed vs. passthrough flags; reject `--print`/`-p`; capture `--json-schema` / `--system-prompt` / `--input-format`. |
+| `src/cli.ts` | Parse argv → `Config`; classify consumed vs. passthrough flags; reject `--print`/`-p`; short-circuit `-h`/`--help`; capture `--json-schema` / `--system-prompt` / `--input-format`. |
 | `src/session.ts` | Resolve which transcript to follow (generated id / `--session-id` / `--resume` / `--continue` discovery). |
 | `src/driver.ts` | Spawn the TUI in a pty; emit ready / turn-done signals; inject messages; auto-deny permission boxes. Multi-turn capable. |
 | `src/tailer.ts` | Incremental cursor over the growing JSONL — yields only newly completed events. |

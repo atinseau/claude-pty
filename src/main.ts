@@ -1,7 +1,7 @@
 // src/main.ts
 
 import { basename } from "path";
-import { parseArgs } from "./cli";
+import { helpText, parseArgs } from "./cli";
 import { startSession } from "./driver";
 import { detectError } from "./errors";
 import { formatJson } from "./format/json";
@@ -42,6 +42,13 @@ async function main() {
     process.stderr.write((e instanceof Error ? e.message : String(e)) + "\n");
     process.exit(2);
   }
+
+  // --help / -h: print usage to stdout and exit 0 without driving the TUI.
+  if (config.help) {
+    process.stdout.write(helpText());
+    process.exit(0);
+  }
+
   const stdinText = await readStdin();
 
   // In stream-json input mode, stdin is NDJSON messages — do NOT combine with positional message.

@@ -11,6 +11,8 @@ export interface Config {
   jsonSchema?: string;
   /** Raw --system-prompt value (captured, NOT forwarded directly). */
   systemPrompt?: string;
+  /** True when --help / -h was passed; main.ts prints helpText() and exits 0. */
+  help: boolean;
 }
 
 const CONSUMED_WITH_VALUE = new Set(["--output-format"]);
@@ -40,10 +42,71 @@ export function buildSchemaInstruction(schema: string): string {
   );
 }
 
+/**
+ * Render claude-pty's own usage text.
+ *
+ * Documents ONLY the flags claude-pty owns/consumes plus its passthrough
+ * behaviour, env vars and exit codes — it deliberately does NOT duplicate
+ * claude's own flag list (those are forwarded to the real TUI; run
+ * `claude --help` for them). Pure, returns a string — exported for testing.
+ */
+export function helpText(): string {
+  return `claude-pty — a drop-in replacement for 'claude -p' that drives the real
+interactive Claude Code TUI through a pseudo-terminal.
+
+USAGE
+  claude-pty [options] "message"
+  cat context.txt | claude-pty [options] "message"
+
+OPTIONS OWNED BY claude-pty (consumed, not forwarded to claude)
+  --output-format <text|json|stream-json>
+                          Output shape. Default: text.
+  --input-format <text|stream-json>
+                          Input shape. stream-json reads NDJSON user messages
+                          from stdin for multi-turn. Default: text.
+  --json-schema <schema>  Constrain the reply to a JSON object matching the
+                          given JSON Schema (injected via a system prompt).
+  --system-prompt <text>  System prompt (merged with the --json-schema
+                          instruction when both are given).
+  --verbose               Verbose mode.
+  -h, --help              Show this help and exit.
+
+PASSTHROUGH
+  Any other flag (e.g. --model, --allowedTools, --resume, --continue,
+  --session-id, --append-system-prompt) is passed through unchanged to the
+  real claude TUI. Run 'claude --help' for the full list of those flags.
+
+  --print / -p is rejected by design: claude-pty IS the -p replacement.
+
+ENVIRONMENT
+  CLAUDE_PTY_BIN              Path to the claude binary to drive.
+  CLAUDE_PTY_TURN_TIMEOUT_MS  Per-run hard deadline in ms. Default: 600000.
+
+EXIT CODES
+  0  success
+  1  runtime error (e.g. auth failure, max turns, empty transcript)
+  2  invalid arguments (e.g. --print/-p passed)
+`;
+}
+
 export function parseArgs(
   argv: string[],
   genId: () => string = () => crypto.randomUUID(),
 ): Config {
+  // --help / -h short-circuits everything else (even --print/-p and a message):
+  // return immediately so main.ts can print helpText() and exit 0.
+  if (argv.includes("--help") || argv.includes("-h")) {
+    return {
+      message: "",
+      sessionId: "",
+      outputFormat: "text",
+      inputFormat: "text",
+      verbose: false,
+      passthrough: [],
+      help: true,
+    };
+  }
+
   let message = "";
   let outputFormat: Config["outputFormat"] = "text";
   let inputFormat: Config["inputFormat"] = "text";
@@ -132,5 +195,6 @@ export function parseArgs(
     passthrough,
     jsonSchema,
     systemPrompt,
+    help: false,
   };
 }
