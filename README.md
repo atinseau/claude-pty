@@ -17,6 +17,7 @@ claude-pty --output-format json "Summarize this repository"
 - [Why does this exist?](#why-does-this-exist)
 - [How it works](#how-it-works)
 - [Install](#install)
+- [Install (release binary)](#install-release-binary)
 - [Usage](#usage)
 - [Parity with `claude -p`](#parity-with-claude--p)
 - [Architecture](#architecture)
@@ -86,6 +87,72 @@ Run it directly with Bun, or compile a binary (see [Build](#build)):
 ```bash
 bun run src/main.ts --output-format text "hello"
 ```
+
+## Install (release binary)
+
+Prefer not to build from source? Each [GitHub Release](../../releases) ships a
+prebuilt archive per OS/arch. Pick the one matching your platform:
+
+| Platform | Archive |
+| --- | --- |
+| Windows x64 | `claude-pty-windows-x64.zip` |
+| macOS Apple Silicon | `claude-pty-darwin-arm64.tar.gz` |
+| macOS Intel | `claude-pty-darwin-x64.tar.gz` |
+| Linux x64 | `claude-pty-linux-x64.tar.gz` |
+
+Prerequisites:
+
+- [Claude Code](https://claude.com/claude-code) installed — `claude-pty` drives the real `claude` binary.
+- If `claude` isn't on your `PATH`, point at it: set `CLAUDE_PTY_BIN=/path/to/claude`.
+
+> **Keep them together.** Every archive contains the `claude-pty` (or
+> `claude-pty.exe`) binary **and** a `node_modules/node-pty/` folder. The binary
+> is not standalone — at runtime it loads the native `node-pty` from a
+> `node_modules/node-pty/` directory sitting **next to the executable's real
+> location**. Always extract both into the same folder and keep them together.
+
+### Windows
+
+1. Download `claude-pty-windows-x64.zip` from the latest release.
+2. Extract it to a stable folder, e.g. `%LOCALAPPDATA%\claude-pty`. After
+   extraction that folder should contain `claude-pty.exe` and
+   `node_modules\node-pty\`.
+3. Add the folder to your user `PATH`:
+   - GUI: Settings → System → About → Advanced system settings → Environment
+     Variables → edit **Path** (user) → add `%LOCALAPPDATA%\claude-pty`.
+   - Or from a terminal (persists for new shells):
+     ```cmd
+     setx PATH "%PATH%;%LOCALAPPDATA%\claude-pty"
+     ```
+4. Open a **new** terminal and run `claude-pty "hello"`.
+
+### macOS / Linux
+
+1. Download the matching `.tar.gz` (e.g. `claude-pty-darwin-arm64.tar.gz`).
+2. Extract it to a stable folder, e.g. `~/.local/claude-pty`:
+   ```bash
+   mkdir -p ~/.local/claude-pty
+   tar -xzf claude-pty-darwin-arm64.tar.gz --strip-components=1 -C ~/.local/claude-pty
+   chmod +x ~/.local/claude-pty/claude-pty
+   ```
+   That folder should now contain `claude-pty` and `node_modules/node-pty/`.
+3. Put it on your `PATH`, either by adding the folder:
+   ```bash
+   echo 'export PATH="$HOME/.local/claude-pty:$PATH"' >> ~/.zshrc   # or ~/.bashrc
+   ```
+   or by symlinking just the binary into a directory already on `PATH`:
+   ```bash
+   ln -s ~/.local/claude-pty/claude-pty ~/.local/bin/claude-pty
+   ```
+   A symlink is fine: `node-pty` is resolved relative to the binary's **real**
+   path (`process.execPath`), so the bundled `node_modules/node-pty/` is still
+   found via the symlink target — just keep the binary and that folder together.
+4. Open a **new** terminal and run `claude-pty "hello"`.
+
+> **First-run caveat.** Unlike `claude -p`, `claude-pty` drives the interactive
+> TUI, so the **very first** run in a brand-new directory may show Claude's
+> workspace-trust prompt. Run `claude-pty` once in a project you've already
+> trusted, or trust the folder, and subsequent runs proceed non-interactively.
 
 ## Usage
 
