@@ -41,10 +41,34 @@ export function runDaemon(): void {
   let active = 0;
   let lastActivity = Date.now();
 
+  // Fork-bomb backstop (defense-in-depth). The root cause — node-pty forking the
+  // binary as its conpty agent — is neutralised at the entry point (see
+  // handleNodePtyAgentInvocation in main.ts), but a runaway spawn rate should
+  // still hard-stop the daemon rather than melt the machine.
+  const spawnTimes: number[] = [];
+  const onSpawn = () => {
+    const now = Date.now();
+    spawnTimes.push(now);
+    while (spawnTimes.length && now - spawnTimes[0]! > 10_000)
+      spawnTimes.shift();
+    if (spawnTimes.length > 30) {
+      try {
+        writeFileSync(
+          endpointPath().replace(/daemon\.json$/, "daemon-fuse.log"),
+          `tripped at ${new Date(now).toISOString()} (${spawnTimes.length} spawns/10s)\n`,
+        );
+        rmSync(endpointPath(), { force: true });
+      } catch {
+        /* ignore */
+      }
+      process.exit(3);
+    }
+  };
+
   const server = createServer((sock) => {
     active++;
     lastActivity = Date.now();
-    handleConnection(sock, token).finally(() => {
+    handleConnection(sock, token, onSpawn).finally(() => {
       active--;
       lastActivity = Date.now();
     });
@@ -79,7 +103,11 @@ export function runDaemon(): void {
   idle.unref?.();
 }
 
-async function handleConnection(sock: Socket, token: string): Promise<void> {
+async function handleConnection(
+  sock: Socket,
+  token: string,
+  onSpawn: () => void,
+): Promise<void> {
   sock.setEncoding("utf8");
   const dec = createFrameDecoder();
   const out = (s: string) => sock.write(encodeFrame({ s: "o", d: s }));
@@ -124,6 +152,8 @@ async function handleConnection(sock: Socket, token: string): Promise<void> {
       return;
     }
 
+    onSpawn(); // count this real request for the fork-bomb backstop
+
     const { sess, ndjsonMessages, preExisting } = await prepare(
       config,
       argv,
@@ -137,19 +167,26 @@ async function handleConnection(sock: Socket, token: string): Promise<void> {
       { onTurnDone: () => (ptyDone = true) },
       { cwd, env },
     );
-    const code = await drive(
-      config,
-      session,
-      {
-        sess,
-        preExisting,
-        ndjsonMessages,
-        ptyDone: () => ptyDone,
-        cwd,
-        turnTimeoutMs: turnTimeoutMs(env),
-      },
-      { out, err },
-    );
+    let code = 1;
+    try {
+      code = await drive(
+        config,
+        session,
+        {
+          sess,
+          preExisting,
+          ndjsonMessages,
+          ptyDone: () => ptyDone,
+          cwd,
+          turnTimeoutMs: turnTimeoutMs(env),
+        },
+        { out, err },
+      );
+    } finally {
+      // drive() kills on its normal path; this guarantees the claude.exe tree is
+      // reaped even if drive() threw, so the long-lived daemon never orphans a TUI.
+      session.kill();
+    }
     await finish(code);
   } catch (e) {
     err(`daemon error: ${e instanceof Error ? e.message : String(e)}\n`);

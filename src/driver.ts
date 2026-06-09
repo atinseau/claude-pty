@@ -45,6 +45,7 @@
 // TURN_DONE_DEBOUNCE_MS (800 ms). This debounce prevents false fires between
 // tool calls where the TUI briefly re-renders the prompt.
 
+import { spawnSync } from "child_process";
 import { existsSync } from "fs";
 import { createRequire } from "module";
 import type { IPty } from "node-pty";
@@ -289,6 +290,14 @@ export interface Session {
    * TUI is ready to receive the next message. Reset by inject().
    */
   promptBack: () => boolean;
+  /**
+   * Terminate the TUI and its ENTIRE process tree. On Windows the claude TUI
+   * spawns its own console subprocesses (MCP servers, hooks); `pty.kill()` alone
+   * leaves them running, and under the daemon (a detached, console-less parent)
+   * each lingering child pops/flashes a console window. taskkill /T reaps the
+   * whole tree so nothing is orphaned. Always use this instead of pty.kill().
+   */
+  kill: () => void;
 }
 
 /**
@@ -453,11 +462,35 @@ export function startSession(
     ptyWrite(message + "\r");
   }
 
+  function kill(): void {
+    // Reap the WHOLE claude.exe tree (the TUI plus any MCP/hook subprocesses it
+    // spawned). On Windows pty.kill() alone leaves those children running; under
+    // the daemon they linger and flash console windows. taskkill /T handles the
+    // tree; run it hidden so the kill itself doesn't pop a window.
+    const pid = pty.pid;
+    if (process.platform === "win32" && pid) {
+      try {
+        spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+      } catch {
+        /* fall through to pty.kill */
+      }
+    }
+    try {
+      pty.kill();
+    } catch {
+      /* already dead */
+    }
+  }
+
   return {
     pty,
     snapshot: () => outputLog,
     ready: readyPromise,
     inject,
     promptBack: () => promptBackSeen,
+    kill,
   };
 }
