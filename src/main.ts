@@ -4,8 +4,15 @@ import { helpText, parseArgs } from "./cli";
 import { runDaemon, runViaDaemon } from "./daemon";
 import { drive } from "./drive";
 import { startSession } from "./driver";
+import { handleNodePtyAgentInvocation } from "./node-pty-agent";
 import { prepare, turnTimeoutMs } from "./prepare";
 import { readStdin } from "./stdin";
+
+// FIRST: if node-pty forked us as its conpty console-list agent (only possible in
+// a compiled binary, where process.execPath is us), answer its IPC and exit.
+// Falling through to main() here is exactly what would fork-bomb under the
+// daemon. See src/node-pty-agent.ts.
+handleNodePtyAgentInvocation(process.argv);
 
 /** Direct path: spawn the TUI in-process and drive it (the default, always-works route). */
 async function runDirect(argv: string[], stdinText: string): Promise<number> {

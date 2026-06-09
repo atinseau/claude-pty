@@ -165,7 +165,9 @@ export async function drive(
 
   // Kill the (single-use) session before formatting output, exactly as the
   // previous inline flow did — snapshot() reads the already-captured pty log.
-  session.pty.kill();
+  // kill() reaps the whole claude.exe tree (TUI + MCP/hook children) so nothing
+  // is orphaned — critical under the long-lived, console-less daemon.
+  session.kill();
 
   if (collected.length === 0) {
     // No consumable transcript: surface a faithful error result if the pty text
