@@ -122,8 +122,11 @@ function makePtyWriter(pty: IPty, coninFd: number | null) {
   };
 }
 
+// Resolve the claude binary to drive: an explicit CLAUDE_PTY_BIN wins; otherwise
+// find `claude` on PATH (portable across machines); fall back to the bare name so
+// the OS still attempts a PATH lookup at spawn time.
 export const CLAUDE_BIN =
-  process.env.CLAUDE_PTY_BIN ?? "C:\\Users\\arthur\\.local\\bin\\claude.exe";
+  process.env.CLAUDE_PTY_BIN ?? Bun.which("claude") ?? "claude";
 
 /**
  * Build the environment for the spawned claude TUI.
