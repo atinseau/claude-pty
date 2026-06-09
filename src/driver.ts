@@ -113,6 +113,34 @@ const CLAUDE_BIN =
   process.env.CLAUDE_PTY_BIN ?? "C:\\Users\\arthur\\.local\\bin\\claude.exe";
 
 /**
+ * Build the environment for the spawned claude TUI.
+ *
+ * Strips the "running inside Claude Code" signal variables (CLAUDECODE and the
+ * whole CLAUDE_CODE_* family) from the inherited env. When claude-pty is invoked
+ * from within a Claude Code session (or any nested claude context), these leak
+ * into the child TUI and make it behave as a sub-session that does NOT persist a
+ * normal JSONL transcript — only an `ai-title` line. Since claude-pty's entire
+ * design tails that transcript as its source of truth, the child then never
+ * produces consumable output and claude-pty hangs until its turn timeout
+ * (default 600s) before failing with "transcript not found".
+ *
+ * claude-pty's own CLAUDE_PTY_* configuration vars use a different prefix and are
+ * preserved. Returns a fresh object — never mutates the input.
+ *
+ * Exported for unit testing — keep this pure (no side-effects).
+ */
+export function childEnv(
+  parent: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(parent)) {
+    if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
  * Prompt-ready predicate.
  *
  * Matches the raw pty stream when the TUI's input box is ready for input.
@@ -217,6 +245,13 @@ const BUFFER_CAP = 16384;
 /** Debounce window after prompt reappears before firing onTurnDone. */
 const TURN_DONE_DEBOUNCE_MS = 800;
 
+/**
+ * Settling delay between the first prompt-ready signal and injecting the
+ * message. Lets the TUI finish painting its input box so the keystrokes land in
+ * a stable prompt. Verified reliable at this value against Claude Code 2.1.169.
+ */
+const INJECT_RENDER_DELAY_MS = 25;
+
 export interface DriverHooks {
   onReady?: () => void;
   onTurnDone?: () => void;
@@ -271,6 +306,7 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
     cols: 120,
     rows: 40,
     cwd: process.cwd(),
+    env: childEnv(),
   });
 
   let buffer = "";
@@ -329,12 +365,12 @@ export function startSession(config: Config, hooks: DriverHooks = {}): Session {
       _readyResolve = null;
 
       if (!multiTurnMode) {
-        // Single-turn: auto-inject the message after 50ms render delay.
+        // Single-turn: auto-inject the message after a short render-settle delay.
         setTimeout(() => {
           ptyWrite(pty, config.message + "\r");
           buffer = ""; // reset so the post-turn ready check starts clean
           awaitingTurn = true;
-        }, 50);
+        }, INJECT_RENDER_DELAY_MS);
       }
       // In multi-turn mode: do NOT auto-inject; caller will call send().
       return;
