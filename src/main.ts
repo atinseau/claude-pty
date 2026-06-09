@@ -196,13 +196,19 @@ async function main() {
   // We drive the TUI with a merged --system-prompt that instructs Claude to
   // output ONLY a JSON object; then we extract and validate it from the
   // assistant's text response. No attachment is needed.
+  //
+  // On validation failure we stay iso to real `claude -p`: empirically -p sets
+  // is_error=true with subtype "success" (NOT "error_max_structured_output_retries")
+  // and num_turns=1 — it does NOT retry at the turn level. So we just flag the
+  // error in a single turn and omit structured_output; the subtype keeps its
+  // reconstructed "success" value. (Verified against claude -p with two
+  // impossible schemas: minLength>maxLength and minimum>maximum.)
   if (config.jsonSchema) {
     const parsed = extractJson(formatText(collected));
     if (parsed !== undefined && validateAgainstSchema(parsed, JSON.parse(config.jsonSchema))) {
       result.structured_output = parsed;
     } else {
       result.is_error = true;
-      result.subtype = "error_max_structured_output_retries";
     }
   }
 
