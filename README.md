@@ -245,6 +245,7 @@ The Windows/Bun specifics of driving ConPTY (capturing the conin fd to work arou
 | `bun run test` | `bun test` |
 | `bun run build` | Compile a binary for the current platform → `claude-pty.exe` |
 | `bun run build:all` | Cross-compile for all main targets into `dist/` |
+| `bun run bench` | Benchmark end-to-end latency vs `claude -p` (real API calls) — total, time-to-first-event, and the spawn→ready phase. Flags: `--reps N`, `--prompt "…"`, `--no-baseline` |
 
 A [lefthook](https://lefthook.dev) **pre-commit** hook runs `check`, `check-types`, and `test` in parallel — a failing check blocks the commit. Run `bunx lefthook install` after cloning to enable it.
 
