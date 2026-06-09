@@ -1,0 +1,10 @@
+# Enforce LF line endings for all text files so tooling (Biome is configured
+# with lineEnding "lf") is consistent across OSes regardless of core.autocrlf.
+* text=auto eol=lf
+
+# Binary assets — never touch their bytes.
+*.exe binary
+*.node binary
+*.png binary
+*.jpg binary
+*.lockb binary
