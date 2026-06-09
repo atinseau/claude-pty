@@ -29,7 +29,7 @@ import {
   type SessionResolution,
 } from "./session";
 import { extractJson, validateAgainstSchema } from "./structured";
-import { makeTranscriptCursor } from "./tailer";
+import { makeTranscriptTail } from "./tailer";
 import { countTerminalTurns, isTerminal, turnComplete } from "./turn";
 import type { TranscriptEvent } from "./types";
 
@@ -79,7 +79,7 @@ export async function drive(
 ): Promise<number> {
   const { sess, preExisting, ndjsonMessages } = deps;
 
-  const cursor = makeTranscriptCursor();
+  const tail = makeTranscriptTail();
   const collected: TranscriptEvent[] = [];
   let emitter: ReturnType<typeof createStreamJsonEmitter> | null = null;
   let effectiveId = sess.sessionId ?? "";
@@ -117,8 +117,7 @@ export async function drive(
         }
       }
       if (path) {
-        const text = await Bun.file(path).text();
-        const fresh = cursor.consume(text);
+        const fresh = await tail.poll(path);
         for (const e of fresh) {
           collected.push(e);
           if (config.outputFormat === "stream-json") {
@@ -155,8 +154,7 @@ export async function drive(
         }
       }
       if (path) {
-        const text = await Bun.file(path).text();
-        const fresh = cursor.consume(text);
+        const fresh = await tail.poll(path);
         for (const e of fresh) {
           collected.push(e);
           if (config.outputFormat === "stream-json") {
