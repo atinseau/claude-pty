@@ -1,12 +1,14 @@
 // src/main.ts
 
-import { helpText, parseArgs } from "./cli";
-import { runDaemon, runViaDaemon } from "./daemon";
-import { drive } from "./drive";
-import { startSession } from "./driver";
-import { handleNodePtyAgentInvocation } from "./node-pty-agent";
-import { prepare, turnTimeoutMs } from "./prepare";
-import { readStdin } from "./stdin";
+import { parseArgs } from "./cli/args";
+import { helpText } from "./cli/help";
+import { readStdin } from "./cli/stdin";
+import { runViaDaemon } from "./daemon/client";
+import { runDaemon } from "./daemon/server";
+import { handleNodePtyAgentInvocation } from "./pty/agent-guard";
+import { startSession } from "./pty/session";
+import { drive } from "./run/drive";
+import { prepare, turnTimeoutMs } from "./run/prepare";
 
 // FIRST: if node-pty forked us as its conpty console-list agent (only possible in
 // a compiled binary, where process.execPath is us), answer its IPC and exit.
