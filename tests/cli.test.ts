@@ -12,12 +12,19 @@ test("extracts message and defaults output-format to text", () => {
   expect(c.passthrough).toEqual([]);
 });
 
-test("consumes -p and --output-format, never forwarding them", () => {
-  const c = parseArgs(["-p", "--output-format", "json", "hi"], fixedId);
+test("consumes --output-format, never forwarding it", () => {
+  const c = parseArgs(["--output-format", "json", "hi"], fixedId);
   expect(c.outputFormat).toBe("json");
   expect(c.message).toBe("hi");
-  expect(c.passthrough).not.toContain("-p");
   expect(c.passthrough).not.toContain("--output-format");
+});
+
+test("--print throws an error (claude-pty replaces -p)", () => {
+  expect(() => parseArgs(["--print", "hi"], fixedId)).toThrow("--print/-p flag is not supported");
+});
+
+test("-p throws an error (claude-pty replaces -p)", () => {
+  expect(() => parseArgs(["-p", "hi"], fixedId)).toThrow("--print/-p flag is not supported");
 });
 
 test("forwards unknown flags with their values as passthrough", () => {
@@ -54,10 +61,60 @@ test("value-taking flags still consume their value", () => {
   expect(c.message).toBe("hi");
 });
 
-test("--json-schema is forwarded to passthrough with its value", () => {
-  const schema = '{"type":"object"}';
-  const c = parseArgs(["--json-schema", schema, "set x to hi"], () => "id");
-  expect(c.passthrough).toContain("--json-schema");
-  expect(c.passthrough).toContain(schema);
+// ─── --json-schema tests ──────────────────────────────────────────────────────
+
+test("--json-schema is captured into config.jsonSchema and NOT in passthrough", () => {
+  const schema = '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
+  const c = parseArgs(["--json-schema", schema, "set x to hi"], fixedId);
+  expect(c.jsonSchema).toBe(schema);
+  expect(c.passthrough).not.toContain("--json-schema");
+  expect(c.passthrough).not.toContain(schema);
   expect(c.message).toBe("set x to hi");
+});
+
+test("--json-schema without user system prompt: passthrough has --system-prompt with schema instruction", () => {
+  const schema = '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
+  const c = parseArgs(["--json-schema", schema, "go"], fixedId);
+  const spIdx = c.passthrough.indexOf("--system-prompt");
+  expect(spIdx).toBeGreaterThanOrEqual(0);
+  const spValue = c.passthrough[spIdx + 1]!;
+  expect(spValue).toContain(schema);
+  expect(spValue.toLowerCase()).toContain("json");
+});
+
+test("--system-prompt without --json-schema: passthrough has --system-prompt unchanged", () => {
+  const c = parseArgs(["--system-prompt", "Be brief.", "hi"], fixedId);
+  expect(c.systemPrompt).toBe("Be brief.");
+  const spIdx = c.passthrough.indexOf("--system-prompt");
+  expect(spIdx).toBeGreaterThanOrEqual(0);
+  expect(c.passthrough[spIdx + 1]).toBe("Be brief.");
+});
+
+test("--system-prompt + --json-schema: passthrough --system-prompt merges both", () => {
+  const schema = '{"type":"object"}';
+  const c = parseArgs(["--system-prompt", "Be terse.", "--json-schema", schema, "go"], fixedId);
+  expect(c.systemPrompt).toBe("Be terse.");
+  expect(c.jsonSchema).toBe(schema);
+  const spIdx = c.passthrough.indexOf("--system-prompt");
+  expect(spIdx).toBeGreaterThanOrEqual(0);
+  const spValue = c.passthrough[spIdx + 1]!;
+  // merged value contains user prompt AND schema instruction
+  expect(spValue).toContain("Be terse.");
+  expect(spValue).toContain(schema);
+  // only ONE --system-prompt in passthrough
+  const count = c.passthrough.filter(v => v === "--system-prompt").length;
+  expect(count).toBe(1);
+});
+
+test("--append-system-prompt always passes through untouched", () => {
+  const c = parseArgs(["--append-system-prompt", "Always end with DONE.", "hi"], fixedId);
+  expect(c.passthrough).toContain("--append-system-prompt");
+  expect(c.passthrough).toContain("Always end with DONE.");
+});
+
+test("--append-system-prompt passes through even when --json-schema present", () => {
+  const schema = '{"type":"object"}';
+  const c = parseArgs(["--append-system-prompt", "extra.", "--json-schema", schema, "go"], fixedId);
+  expect(c.passthrough).toContain("--append-system-prompt");
+  expect(c.passthrough).toContain("extra.");
 });

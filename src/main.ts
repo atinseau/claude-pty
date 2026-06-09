@@ -10,7 +10,7 @@ import { createStreamJsonEmitter } from "./format/streamjson";
 import { makeTranscriptCursor } from "./tailer";
 import { resolveSessionId, findTranscriptById, listTranscripts } from "./session";
 import { detectError } from "./errors";
-import { extractStructuredOutput } from "./structured";
+import { extractJson, validateAgainstSchema } from "./structured";
 import { basename } from "path";
 import type { TranscriptEvent } from "./types";
 
@@ -25,7 +25,13 @@ function isTerminal(events: TranscriptEvent[]): boolean {
 
 async function main() {
   const argv = Bun.argv.slice(2);
-  const config = parseArgs(argv);
+  let config: ReturnType<typeof parseArgs>;
+  try {
+    config = parseArgs(argv);
+  } catch (e) {
+    process.stderr.write((e instanceof Error ? e.message : String(e)) + "\n");
+    process.exit(2);
+  }
   const stdinText = await readStdin();
   config.message = combineMessage(config.message, stdinText);
   const sess = resolveSessionId(argv);
@@ -126,11 +132,19 @@ async function main() {
     if (verdict.apiErrorStatus !== undefined) result.api_error_status = verdict.apiErrorStatus;
   }
 
-  // Extract structured output from the raw transcript when --json-schema was used.
-  // The attachment line is NOT surfaced by parseLine/parseTranscript, so we read
-  // directly from the raw transcript text rather than the parsed event stream.
-  const structured = extractStructuredOutput(lastText);
-  if (structured !== undefined) result.structured_output = structured;
+  // Extract and validate structured output when --json-schema was used.
+  // We drive the TUI with a merged --system-prompt that instructs Claude to
+  // output ONLY a JSON object; then we extract and validate it from the
+  // assistant's text response. No attachment is needed.
+  if (config.jsonSchema) {
+    const parsed = extractJson(formatText(collected));
+    if (parsed !== undefined && validateAgainstSchema(parsed, JSON.parse(config.jsonSchema))) {
+      result.structured_output = parsed;
+    } else {
+      result.is_error = true;
+      result.subtype = "error_max_structured_output_retries";
+    }
+  }
 
   if (config.outputFormat === "text") {
     process.stdout.write(formatText(collected) + "\n");

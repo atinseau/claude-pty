@@ -1,57 +1,105 @@
 // tests/structured.test.ts
 import { test, expect } from "bun:test";
-import { extractStructuredOutput } from "../src/structured";
-import { join } from "path";
+import { extractJson, validateAgainstSchema } from "../src/structured";
 
-const FIXTURES = join(import.meta.dir, "fixtures");
+// ─── extractJson ─────────────────────────────────────────────────────────────
 
-// Load the real fixture captured from a live --json-schema run
-const fixtureText = await Bun.file(join(FIXTURES, "structured.jsonl")).text();
-
-test("returns the structured object when attachment is present", () => {
-  const result = extractStructuredOutput(fixtureText);
-  expect(result).toBeDefined();
-  expect(result).toEqual({ x: "hi" });
+test("extracts plain JSON object", () => {
+  expect(extractJson('{"x":"hi"}')).toEqual({ x: "hi" });
 });
 
-test("returns undefined when no structured_output attachment is present", () => {
-  // transcript with no attachment lines
-  const noAttachment = [
-    '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}',
-    '{"type":"assistant","message":{"content":[{"type":"text","text":"world"}],"stop_reason":"end_turn"}}',
-  ].join("\n");
-  expect(extractStructuredOutput(noAttachment)).toBeUndefined();
+test("extracts plain JSON array", () => {
+  expect(extractJson('[1,2,3]')).toEqual([1, 2, 3]);
+});
+
+test("extracts JSON from fenced code block (```json ... ```)", () => {
+  const text = "```json\n{\"x\":\"hi\"}\n```";
+  expect(extractJson(text)).toEqual({ x: "hi" });
+});
+
+test("extracts JSON from plain fenced code block (``` ... ```)", () => {
+  const text = "```\n{\"x\":\"hi\"}\n```";
+  expect(extractJson(text)).toEqual({ x: "hi" });
+});
+
+test("extracts JSON embedded in prose", () => {
+  const text = "Here is the result:\n{\"x\":\"hi\"}\nHope that helps!";
+  expect(extractJson(text)).toEqual({ x: "hi" });
+});
+
+test("returns undefined for plain text with no JSON", () => {
+  expect(extractJson("just some words")).toBeUndefined();
 });
 
 test("returns undefined for empty string", () => {
-  expect(extractStructuredOutput("")).toBeUndefined();
+  expect(extractJson("")).toBeUndefined();
 });
 
-test("returns undefined for whitespace-only string", () => {
-  expect(extractStructuredOutput("   \n  \n  ")).toBeUndefined();
+test("returns undefined for malformed JSON", () => {
+  expect(extractJson("{not json}")).toBeUndefined();
 });
 
-test("last structured_output attachment wins when multiple are present", () => {
-  const twoAttachments = [
-    '{"type":"attachment","attachment":{"type":"structured_output","data":{"x":"first"}}}',
-    '{"type":"user","message":{}}',
-    '{"type":"attachment","attachment":{"type":"structured_output","data":{"x":"last"}}}',
-  ].join("\n");
-  const result = extractStructuredOutput(twoAttachments);
-  expect(result).toEqual({ x: "last" });
+test("handles nested objects", () => {
+  const text = '{"a":{"b":1},"c":[1,2]}';
+  expect(extractJson(text)).toEqual({ a: { b: 1 }, c: [1, 2] });
 });
 
-test("ignores non-structured_output attachment types", () => {
-  const hookAttachment =
-    '{"type":"attachment","attachment":{"type":"hook_success","data":{"foo":"bar"}}}';
-  expect(extractStructuredOutput(hookAttachment)).toBeUndefined();
+test("strips leading/trailing whitespace before parsing", () => {
+  expect(extractJson('  \n  {"x":1}  \n  ')).toEqual({ x: 1 });
 });
 
-test("ignores non-JSON lines gracefully", () => {
-  const mixed = [
-    "not json at all",
-    '{"type":"attachment","attachment":{"type":"structured_output","data":{"x":"ok"}}}',
-    "also not json",
-  ].join("\n");
-  expect(extractStructuredOutput(mixed)).toEqual({ x: "ok" });
+// ─── validateAgainstSchema ────────────────────────────────────────────────────
+
+test("validates conforming object (required keys present, correct types)", () => {
+  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  expect(validateAgainstSchema({ x: "hi" }, schema)).toBe(true);
+});
+
+test("rejects object missing required key", () => {
+  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  expect(validateAgainstSchema({}, schema)).toBe(false);
+});
+
+test("rejects object with wrong type for property", () => {
+  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  expect(validateAgainstSchema({ x: 42 }, schema)).toBe(false);
+});
+
+test("validates array when schema type is array", () => {
+  const schema = { type: "array" };
+  expect(validateAgainstSchema([1, 2], schema)).toBe(true);
+});
+
+test("rejects array when schema type is object", () => {
+  const schema = { type: "object" };
+  expect(validateAgainstSchema([1, 2], schema)).toBe(false);
+});
+
+test("validates string value", () => {
+  const schema = { type: "string" };
+  expect(validateAgainstSchema("hello", schema)).toBe(true);
+});
+
+test("rejects wrong top-level type (number vs string)", () => {
+  const schema = { type: "string" };
+  expect(validateAgainstSchema(42, schema)).toBe(false);
+});
+
+test("validates number value", () => {
+  const schema = { type: "number" };
+  expect(validateAgainstSchema(3.14, schema)).toBe(true);
+});
+
+test("validates boolean value", () => {
+  const schema = { type: "boolean" };
+  expect(validateAgainstSchema(true, schema)).toBe(true);
+});
+
+test("schema with no type constraint: any value passes", () => {
+  expect(validateAgainstSchema({ anything: 1 }, {})).toBe(true);
+});
+
+test("object with extra properties beyond required: still valid", () => {
+  const schema = { type: "object", properties: { x: { type: "string" } }, required: ["x"] };
+  expect(validateAgainstSchema({ x: "hi", y: 99 }, schema)).toBe(true);
 });

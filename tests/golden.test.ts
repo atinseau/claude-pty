@@ -66,10 +66,31 @@ test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("--continue/--resume recalls pri
   expect(out.toLowerCase()).toContain("platypus");
 }, 150000);
 
-test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("--json-schema yields structured_output in json", async () => {
+// Non-e2e: --print must exit non-zero (claude-pty replaces -p; passing --print is an error)
+test("--print flag causes non-zero exit", async () => {
+  const p = Bun.spawn(["bun", "run", "src/main.ts", "--print", "hi"], {
+    env: { ...process.env },
+  });
+  const code = await p.exited;
+  expect(code).not.toBe(0);
+});
+
+test("-p flag causes non-zero exit", async () => {
+  const p = Bun.spawn(["bun", "run", "src/main.ts", "-p", "hi"], {
+    env: { ...process.env },
+  });
+  const code = await p.exited;
+  expect(code).not.toBe(0);
+});
+
+test.skipIf(process.env.CLAUDE_PTY_E2E !== "1")("--json-schema yields structured_output via TUI (no -p)", async () => {
   const schema = '{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}';
-  const out = await new Response(Bun.spawn(["bun","run","src/main.ts","--output-format","json","--json-schema",schema,"set x to the string hi"], { env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "60000" } }).stdout).text();
+  const out = await new Response(
+    Bun.spawn(
+      ["bun", "run", "src/main.ts", "--output-format", "json", "--json-schema", schema, "Set x to the string hi."],
+      { env: { ...process.env, CLAUDE_PTY_TURN_TIMEOUT_MS: "60000" } }
+    ).stdout
+  ).text();
   const result = JSON.parse(out.trim().split("\n").pop()!);
-  expect(result.structured_output).toBeDefined();
-  expect(result.structured_output.x).toBe("hi");
+  expect(result.structured_output).toEqual({ x: "hi" });
 }, 90000);
