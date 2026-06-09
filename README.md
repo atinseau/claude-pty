@@ -97,7 +97,6 @@ prebuilt archive per OS/arch. Pick the one matching your platform:
 | --- | --- |
 | Windows x64 | `claude-pty-windows-x64.zip` |
 | macOS Apple Silicon | `claude-pty-darwin-arm64.tar.gz` |
-| macOS Intel | `claude-pty-darwin-x64.tar.gz` |
 | Linux x64 | `claude-pty-linux-x64.tar.gz` |
 
 Prerequisites:

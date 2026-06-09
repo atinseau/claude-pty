@@ -73,7 +73,6 @@ jobs:
           - os: windows-latest
           - os: ubuntu-latest
           - os: macos-latest # arm64
-          - os: macos-13 # x64
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
