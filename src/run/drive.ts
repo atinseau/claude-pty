@@ -16,6 +16,7 @@
 import { basename } from "path";
 import type { Config } from "../cli/args";
 import { modelFlag } from "../cli/args";
+import { makeTurnChainFilter } from "../domain/chain";
 import { detectError } from "../domain/errors";
 import { costOf } from "../domain/pricing";
 import { errorResult, reconstruct } from "../domain/reconstruct";
@@ -87,7 +88,20 @@ export async function drive(
 ): Promise<number> {
   const { sess, preExisting, ndjsonMessages } = deps;
 
-  const tail = makeTranscriptTail();
+  // --resume / --continue are driven like a multi-turn injection (the message is
+  // injected by drive, not auto-injected at spawn), because the interactive TUI
+  // first REPLAYS the whole prior conversation before its input prompt goes live.
+  // We must let that replay settle, skip the inherited transcript, and submit the
+  // turn with a separated Enter — see the continuation block below.
+  const continuation = sess.mode === "resume" || sess.mode === "continue";
+
+  // Continuation transcripts are SHARED: claude lets a second process resume the
+  // same session in parallel and interleaves both turns into one file. Tail only
+  // OUR turn's uuid/parentUuid chain so the other run's events never contaminate
+  // the result (see domain/chain.ts). New/explicit/warm sessions own their file
+  // exclusively — no filter there.
+  const chain = continuation ? makeTurnChainFilter() : null;
+  const tail = makeTranscriptTail(chain ? chain.admit : undefined);
   const collected: TranscriptEvent[] = [];
   let emitter: ReturnType<typeof createStreamJsonEmitter> | null = null;
   let effectiveId = sess.sessionId ?? "";
@@ -109,13 +123,6 @@ export async function drive(
     if (!emitter) emitter = createStreamJsonEmitter(effectiveId);
     for (const line of emitter.initEarly(initModel)) sink.out(line + "\n");
   }
-
-  // --resume / --continue are driven like a multi-turn injection (the message is
-  // injected by drive, not auto-injected at spawn), because the interactive TUI
-  // first REPLAYS the whole prior conversation before its input prompt goes live.
-  // We must let that replay settle, skip the inherited transcript, and submit the
-  // turn with a separated Enter — see the continuation block below.
-  const continuation = sess.mode === "resume" || sess.mode === "continue";
 
   /** Resolve once the pty output stream has been quiet for `quietMs` (or `maxMs`). */
   async function waitQuiet(quietMs: number, maxMs: number): Promise<void> {
@@ -178,6 +185,7 @@ export async function drive(
 
     let completed = 0;
     for (const msg of ndjsonMessages) {
+      chain?.seed(msg); // claim this turn's chain root when it appears in the tail
       session.inject(msg);
       while (Date.now() < deadline) {
         await drainTranscript();

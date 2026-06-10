@@ -71,6 +71,24 @@ test("prime() skips existing content so only later appends are returned", async 
   ]);
 });
 
+test("tail applies the raw-line admit filter before parsing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cp-tail-"));
+  const path = join(dir, "t.jsonl");
+  // Two interleaved turns from two parallel runs: ours (u1/a1) and theirs.
+  const THEIR_ASST = ASST.replace('"uuid":"a1"', '"uuid":"their-a"');
+  writeFileSync(path, `${USER}\n${THEIR_ASST}\n${ASST}\n`);
+
+  const tail = makeTranscriptTail(
+    (raw) => (raw as { uuid?: string }).uuid !== "their-a",
+  );
+  const events = await tail.poll(path);
+  expect(events.map((e) => e.kind)).toEqual(["user", "assistant"]);
+  expect(events.map((e) => (e.kind === "ignored" ? "" : e.uuid))).toEqual([
+    "u1",
+    "a1",
+  ]);
+});
+
 test("prime() on a missing file is a no-op (offset stays at 0)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cp-tail-"));
   const path = join(dir, "later.jsonl");
