@@ -15,7 +15,12 @@ import { parseArgs } from "../cli/args";
 import { helpText } from "../cli/help";
 import { CLAUDE_BIN, type Session, startSession } from "../pty/session";
 import { drive } from "../run/drive";
-import { prepare, turnTimeoutMs } from "../run/prepare";
+import {
+  MISSING_INPUT_ERROR,
+  missingInput,
+  prepare,
+  turnTimeoutMs,
+} from "../run/prepare";
 import { PROTOCOL_VERSION } from "./identity";
 import { takeLiveWarm, warmMessages, warmSess } from "./logic";
 import { WarmPool } from "./pool";
@@ -233,6 +238,13 @@ async function handleConnection(
       stdinText,
       cwd,
     );
+
+    // Nothing to submit: fail fast like `claude -p` (same guard as direct mode).
+    if (missingInput(config, sess)) {
+      err(MISSING_INPUT_ERROR + "\n");
+      await finish(1);
+      return;
+    }
 
     const sig = signatureOf({
       cwd,

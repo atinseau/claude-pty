@@ -8,7 +8,12 @@ import { runDaemon } from "./daemon/server";
 import { handleNodePtyAgentInvocation } from "./pty/agent-guard";
 import { startSession } from "./pty/session";
 import { drive } from "./run/drive";
-import { prepare, turnTimeoutMs } from "./run/prepare";
+import {
+  MISSING_INPUT_ERROR,
+  missingInput,
+  prepare,
+  turnTimeoutMs,
+} from "./run/prepare";
 
 // FIRST: if node-pty forked us as its conpty console-list agent (only possible in
 // a compiled binary, where process.execPath is us), answer its IPC and exit.
@@ -37,6 +42,13 @@ async function runDirect(argv: string[], stdinText: string): Promise<number> {
     stdinText,
     cwd,
   );
+
+  // Nothing to submit: fail fast like `claude -p` instead of spawning a TUI
+  // that would idle until the turn timeout.
+  if (missingInput(config, sess)) {
+    process.stderr.write(MISSING_INPUT_ERROR + "\n");
+    return 1;
+  }
 
   let ptyDone = false;
   const session = startSession(config, {
