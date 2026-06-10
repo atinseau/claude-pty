@@ -60,6 +60,27 @@ export async function prepare(
   return { sess, ndjsonMessages, preExisting };
 }
 
+/** Verbatim `claude -p` missing-input error (stderr, exit 1) — kept byte-identical for parity. */
+export const MISSING_INPUT_ERROR =
+  "Error: Input must be provided either through stdin or as a prompt argument when using --print";
+
+/**
+ * True when the run has nothing to submit: text input, no continuation, and an
+ * empty (post-prepare) message. Without this guard the session spawns in
+ * multi-turn mode (message === ""), drive() never injects, and the run idles
+ * the full turn timeout before failing — where `claude -p` errors immediately.
+ * stream-json input and --resume/--continue are excluded: claude accepts them
+ * without a prompt argument.
+ */
+export function missingInput(config: Config, sess: SessionResolution): boolean {
+  return (
+    config.inputFormat === "text" &&
+    sess.mode !== "resume" &&
+    sess.mode !== "continue" &&
+    config.message === ""
+  );
+}
+
 /** Resolve the per-run hard deadline (ms) from an environment. */
 export function turnTimeoutMs(env: NodeJS.ProcessEnv): number {
   return Number(env.CLAUDE_PTY_TURN_TIMEOUT_MS) || 600_000;
