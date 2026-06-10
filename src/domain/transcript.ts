@@ -20,6 +20,11 @@ export function parseLine(line: string): TranscriptEvent {
   } catch {
     return IGNORED;
   }
+  return parseObject(o);
+}
+
+/** parseLine over an already-JSON.parsed line object (lets callers that need the raw object — e.g. the turn-chain filter — parse once). */
+export function parseObject(o: any): TranscriptEvent {
   const msg = o?.message;
   if (o?.type === "assistant" && msg) {
     return {

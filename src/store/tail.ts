@@ -1,15 +1,36 @@
 // src/tailer.ts
 import { open } from "fs/promises";
-import { parseLine } from "../domain/transcript";
+import { parseObject } from "../domain/transcript";
 import type { TranscriptEvent } from "../domain/types";
 
-/** Parse complete (newline-delimited) JSONL text into events; blanks are ignored. */
-export function parseLines(text: string): TranscriptEvent[] {
+/** Decides whether a raw (JSON.parsed) transcript line belongs to this run — see domain/chain.ts. */
+export type AdmitFilter = (raw: unknown) => boolean;
+
+/**
+ * Parse complete (newline-delimited) JSONL text into events; blanks and
+ * malformed lines are ignored. `admit` (optional) sees each RAW parsed object
+ * before event conversion and drops lines that belong to another run sharing
+ * the transcript file.
+ */
+export function parseLines(
+  text: string,
+  admit?: AdmitFilter,
+): TranscriptEvent[] {
   if (!text) return [];
-  return text
-    .split("\n")
-    .map(parseLine)
-    .filter((e) => e.kind !== "ignored");
+  const out: TranscriptEvent[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let o: unknown;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (admit && !admit(o)) continue;
+    const e = parseObject(o);
+    if (e.kind !== "ignored") out.push(e);
+  }
+  return out;
 }
 
 const NEWLINE = 0x0a;
@@ -24,7 +45,7 @@ const NEWLINE = 0x0a;
  * This replaces re-reading + re-splitting the WHOLE file on every poll, which was
  * O(n²) over a long streamed response.
  */
-export function makeTranscriptTail() {
+export function makeTranscriptTail(admit?: AdmitFilter) {
   let offset = 0;
   return {
     /**
@@ -64,7 +85,7 @@ export function makeTranscriptTail() {
         if (lastNl < 0) return []; // no complete line yet — re-read next poll
         const complete = buf.subarray(0, lastNl + 1);
         offset += complete.length; // advance only past complete lines
-        return parseLines(complete.toString("utf8"));
+        return parseLines(complete.toString("utf8"), admit);
       } finally {
         await fd.close();
       }
