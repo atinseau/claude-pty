@@ -90,10 +90,12 @@ test("--resume / --continue without a message are not missing input", async () =
   }
 });
 
-test("MISSING_INPUT_ERROR matches the real claude -p message", () => {
+test("MISSING_INPUT_ERROR follows claude -p's wording WITHOUT mentioning the banned --print flag", () => {
   expect(MISSING_INPUT_ERROR).toBe(
-    "Error: Input must be provided either through stdin or as a prompt argument when using --print",
+    "Error: Input must be provided either through stdin or as a prompt argument",
   );
+  // claude-pty rejects --print/-p outright, so the error must never point users to it.
+  expect(MISSING_INPUT_ERROR).not.toContain("--print");
 });
 
 test("--resume folds piped stdin into the single injected turn", async () => {

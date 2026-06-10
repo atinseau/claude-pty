@@ -60,9 +60,13 @@ export async function prepare(
   return { sess, ndjsonMessages, preExisting };
 }
 
-/** Verbatim `claude -p` missing-input error (stderr, exit 1) — kept byte-identical for parity. */
+/**
+ * `claude -p`-style missing-input error (stderr, exit 1). Deliberately drops
+ * claude's "when using --print" suffix: claude-pty bans --print/-p, so the
+ * error must not point users to a rejected flag.
+ */
 export const MISSING_INPUT_ERROR =
-  "Error: Input must be provided either through stdin or as a prompt argument when using --print";
+  "Error: Input must be provided either through stdin or as a prompt argument";
 
 /**
  * True when the run has nothing to submit: text input, no continuation, and an
