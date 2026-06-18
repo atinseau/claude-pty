@@ -41,27 +41,27 @@ This gives you a programmatic handle on a real interactive Claude Code session: 
 The core idea: **the pty is only a remote control; the JSONL transcript is the source of truth.**
 
 ```
- argv ─▶ cli ─▶ session ──┐
-                          ▼
-              driver (node-pty) ──spawns──▶ real `claude` interactive TUI
-                  │                                  │
-                  │  reads the pty stream ONLY for   │ writes the conversation to
-                  │  three binary signals:           ▼
-                  │   • prompt ready  (❯ + U+00A0)   ~/.claude/projects/**/<session-id>.jsonl
-                  │   • turn done     (prompt back)         │
-                  │   • permission box → auto-deny (ESC)    │ tailer reads it
-                  │                                         │ incrementally as it grows
-                  └─────────────── injects keystrokes       ▼
-                                                  reconstruct · errors · structured
+ argv ─▶ cli ─▶ run/prepare ─▶ run/drive ──┐
+                                            ▼
+                     pty/session (node-pty) ──spawns──▶ real `claude` interactive TUI
+                         │                                      │
+                         │  pty/signals reads the stream ONLY   │ writes the conversation to
+                         │  for the binary signals:             ▼
+                         │   • prompt ready  (❯ + U+00A0)   ~/.claude/projects/**/<session-id>.jsonl
+                         │   • turn done     (prompt back)         │
+                         │   • permission box → auto-deny (ESC)    │ store/tail reads it
+                         │   • first-run trust dialog → accept     │ incrementally as it grows
+                         └─────────────── injects keystrokes       ▼
+                                                  domain/{transcript,reconstruct,errors,schema}
                                                             │
                                                             ▼
-                                          format/{text,json,stream-json} ─▶ stdout
+                                          output/{text,json,stream-json} ─▶ stdout
 ```
 
-1. **`driver`** spawns the real `claude` TUI in a pty and watches the raw byte stream — but *only* to detect when the input prompt is ready, when a turn has finished, and when a tool-permission box appears (which it auto-denies with `Esc`, exactly as `claude -p` denies tools outside `--allowedTools`). It never parses the screen for content.
+1. **`pty/session`** spawns the real `claude` TUI in a pty and **`pty/signals`** watches the raw byte stream — but *only* to detect when the input prompt is ready, when a turn has finished, when a tool-permission box appears (auto-denied with `Esc`, exactly as `claude -p` denies tools outside `--allowedTools`), and the first-run workspace-trust dialog (auto-accepted). It never parses the screen for content.
 2. Claude writes the full conversation — assistant messages, tool calls with complete input JSON, tool results, token usage — to its JSONL transcript.
-3. **`tailer`** follows that transcript incrementally. As lines appear, **`format/stream-json`** emits events live; `text`/`json` buffer until the turn completes.
-4. **`reconstruct`** assembles the final `result` object (cost estimated from a pricing table, turn count, duration), **`errors`** detects failure states (auth, max-turns) and sets the exit code, and **`structured`** validates `--json-schema` output.
+3. **`store/tail`** follows that transcript incrementally (a byte-offset cursor over the growing file). As lines appear, **`output/stream-json`** emits events live; `text`/`json` buffer until the turn completes.
+4. **`domain/reconstruct`** assembles the final `result` object (cost estimated from a pricing table, turn count, duration), **`domain/errors`** detects failure states (auth, max-turns) and sets the exit code, and **`domain/schema`** validates `--json-schema` output.
 
 Result: **zero ANSI screen-scraping for content.** The fragile part of driving a TUI (parsing redraws) is avoided entirely.
 
@@ -215,24 +215,20 @@ Useful env vars:
 
 ## Architecture
 
-Small, single-responsibility modules with well-defined interfaces:
+Small, single-responsibility modules grouped by concern. `src/main.ts` is the entry point; everything else lives under one of seven directories:
 
 | Module | Responsibility |
 | --- | --- |
-| `src/cli.ts` | Parse argv → `Config`; classify consumed vs. passthrough flags; reject `--print`/`-p`; short-circuit `-h`/`--help`; capture `--json-schema` / `--system-prompt` / `--input-format`. |
-| `src/session.ts` | Resolve which transcript to follow (generated id / `--session-id` / `--resume` / `--continue` discovery). |
-| `src/driver.ts` | Spawn the TUI in a pty; emit ready / turn-done signals; inject messages; auto-deny permission boxes. Multi-turn capable. |
-| `src/tailer.ts` | Incremental cursor over the growing JSONL — yields only newly completed events. |
-| `src/transcript.ts` | Parse JSONL lines into typed `TranscriptEvent`s. |
-| `src/reconstruct.ts` | Aggregate events into the `-p` `result` object. |
-| `src/errors.ts` | Detect error states (auth, max-turns) from the transcript + pty text. |
-| `src/structured.ts` | Extract + validate JSON for `--json-schema`. |
-| `src/ndjson.ts` | Parse NDJSON user messages for `--input-format stream-json`. |
-| `src/pricing.ts` | Model → price table, used to estimate cost. |
-| `src/format/{text,json,streamjson}.ts` | Render events/result to each output format. |
-| `src/main.ts` | Orchestrate: parse → drive → tail → format → exit. |
+| `src/main.ts` | Entry point. Answers the node-pty agent-fork guard, handles `--daemon` (server mode) and the daemon opt-in, then runs the direct path: parse → prepare → drive → exit. |
+| `src/cli/` | `args.ts` parses argv → `Config` (classify consumed vs. passthrough flags, reject `--print`/`-p`, capture `--json-schema` / `--system-prompt` / `--input-format`, merge the schema instruction into the system prompt); `help.ts` renders `claude-pty`'s own usage; `stdin.ts` reads piped stdin and combines it with the message. |
+| `src/run/` | `prepare.ts` finishes request setup shared by both execution paths (resolve stdin → message or NDJSON turns, resolve the session id, snapshot pre-existing transcripts, missing-input guard); `drive.ts` is the core drive loop (inject → tail → format → exit code), shared verbatim by the direct and daemon paths. |
+| `src/pty/` | `session.ts` — the pty-backed session/state machine (spawn the TUI, inject messages, auto-accept the trust dialog, auto-deny permission boxes, turn-done detection, tree-kill); `signals.ts` — the pure byte-stream detectors (ready / permission / trust) and their keystrokes; `runtime.ts` — the Windows/Bun node-pty plumbing; `env.ts` — binary resolution + env scrubbing; `agent-guard.ts` — the node-pty conpty-agent fork-bomb backstop. |
+| `src/store/` | `locate.ts` resolves which transcript to follow (generated id / `--session-id` / `--resume` / `--continue` discovery, most-recent picking); `tail.ts` is the incremental byte-offset cursor over the growing JSONL. |
+| `src/domain/` | Pure transcript logic: `transcript.ts` (parse lines → typed `TranscriptEvent`s), `types.ts`, `turn.ts` (turn-completion predicates), `reconstruct.ts` (events → the `-p` `result`), `errors.ts` (auth / max-turns detection), `schema.ts` (`--json-schema` extract + minimal validate), `ndjson.ts` (multi-turn input), `chain.ts` (uuid/parentUuid filter isolating parallel same-session resumes), `pricing.ts` (model → cost estimate). |
+| `src/output/` | `text.ts` / `json.ts` / `stream-json.ts` render events/result to each output format. |
+| `src/daemon/` | Optional opt-in daemon (see [Daemon mode](#daemon-mode-optional-opt-in)): `server.ts` / `client.ts` (loopback IPC), `pool.ts` + `logic.ts` (warm-TUI pool), `signature.ts` (warm-pool keying), `protocol.ts` (wire framing + endpoint file), `identity.ts` (build-identity probe that invalidates stale daemons). |
 
-The Windows/Bun specifics of driving ConPTY (capturing the conin fd to work around a Bun `net.Socket` write bug, and loading `node-pty` via `createRequire` so the patch applies before the native module initializes) are documented inline in `src/driver.ts`, and the original go/no-go proof lives in `spike/hello-pty.ts`.
+The Windows/Bun specifics of driving ConPTY (capturing the conin fd to work around a Bun `net.Socket` write bug, and loading `node-pty` via `createRequire` so the patch applies before the native module initializes) are documented inline in `src/pty/runtime.ts`, and the original go/no-go proof lives in `spike/hello-pty.ts`.
 
 ## Scripts
 
