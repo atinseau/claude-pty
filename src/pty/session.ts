@@ -10,10 +10,10 @@
 // TURN_DONE_DEBOUNCE_MS (800 ms). This debounce prevents false fires between
 // tool calls where the TUI briefly re-renders the prompt.
 
-import { spawnSync } from "child_process";
 import type { IPty } from "node-pty";
 import type { Config } from "../cli/args";
 import { CLAUDE_BIN, childEnv } from "./env";
+import { killTree } from "./kill-tree";
 import { lastConinFd, makePtyWriter, ptySpawn } from "./runtime";
 import {
   DENY_KEYSTROKE,
@@ -91,14 +91,13 @@ export interface Session {
    */
   msSinceData: () => number;
   /**
-   * Terminate the TUI and its ENTIRE process tree. On Windows the claude TUI
-   * spawns its own console subprocesses (MCP servers, hooks); `pty.kill()` alone
-   * leaves them running, and under the daemon (a detached, console-less parent)
-   * each lingering child pops/flashes a console window. taskkill /T reaps the
-   * whole tree so nothing is orphaned. Always use this instead of pty.kill().
+   * Terminate the TUI and its ENTIRE process tree. The claude TUI spawns its own
+   * subprocesses (MCP servers, hooks) and `pty.kill()` alone leaves them running
+   * on both platforms — orphaned under the daemon. Always use this instead of
+   * pty.kill(); see ./kill-tree.ts.
    */
   kill: () => void;
-  /** False once the pty has exited (claude.exe died). Used to skip dead warm TUIs. */
+  /** False once the pty has exited (the claude process died). Used to skip dead warm TUIs. */
   alive: () => boolean;
 }
 
@@ -299,21 +298,10 @@ export function startSession(
   }
 
   function kill(): void {
-    // Reap the WHOLE claude.exe tree (the TUI plus any MCP/hook subprocesses it
-    // spawned). On Windows pty.kill() alone leaves those children running; under
-    // the daemon they linger and flash console windows. taskkill /T handles the
-    // tree; run it hidden so the kill itself doesn't pop a window.
-    const pid = pty.pid;
-    if (process.platform === "win32" && pid) {
-      try {
-        spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], {
-          windowsHide: true,
-          stdio: "ignore",
-        });
-      } catch {
-        /* fall through to pty.kill */
-      }
-    }
+    // Reap the WHOLE claude tree (the TUI plus any MCP/hook subprocesses it
+    // spawned) — pty.kill() alone leaves children behind on both platforms. See
+    // ./kill-tree.ts for the per-platform mechanics and the evidence.
+    killTree(pty.pid);
     try {
       pty.kill();
     } catch {

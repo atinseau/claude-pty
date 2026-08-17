@@ -28,6 +28,8 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { binaryName } from "../src/platform";
+import { ensureSpawnHelpersExecutable } from "../src/pty/prebuilds";
 
 const isWindows = process.platform === "win32";
 
@@ -43,7 +45,7 @@ const arch = process.arch; // x64 | arm64 | ...
 const ROOT = join(import.meta.dir, "..");
 const DIST = join(ROOT, "dist");
 const STAGE = join(DIST, `claude-pty-${osLabel}-${arch}`);
-const BINARY_NAME = isWindows ? "claude-pty.exe" : "claude-pty";
+const BINARY_NAME = binaryName();
 const ARCHIVE_EXT = isWindows ? "zip" : "tar.gz";
 const ARCHIVE_NAME = `claude-pty-${osLabel}-${arch}.${ARCHIVE_EXT}`;
 
@@ -112,6 +114,15 @@ async function main() {
   console.log(
     `Staged node-pty (prebuilds=${hasPrebuilds} build=${hasBuild})`,
   );
+
+  // tar/zip preserve modes, so a spawn-helper staged without its execute bit
+  // (which is how `bun install` leaves it) would ship broken and every unix user
+  // of the archive would hit "posix_spawnp failed". Repair it before archiving —
+  // the runtime does the same on load, but an archive should be correct as built.
+  const fixedHelpers = ensureSpawnHelpersExecutable(dstNodePty);
+  if (fixedHelpers.length > 0) {
+    console.log(`Restored the execute bit on ${fixedHelpers.length} spawn-helper(s)`);
+  }
 
   // ─── 3. Verify the bundle resolves node-pty from OUTSIDE the project ──────
   await verifyBundle(binOut);

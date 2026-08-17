@@ -1,9 +1,13 @@
 // src/pty/runtime.ts
 //
-// node-pty loading + the Windows/Bun plumbing required to make it work. This is
-// the ONLY module that touches node-pty's CJS internals, and the only one whose
-// load ORDER matters: the net.Socket patch below MUST run before node-pty's
+// node-pty loading + the per-platform Bun plumbing required to make it work.
+// This is the ONLY module that touches node-pty's CJS internals, and the only
+// one whose load ORDER matters: the patches below MUST run before node-pty's
 // index.js is required, so both happen at this module's top level, in sequence.
+//
+// Bun breaks node-pty's I/O on BOTH platforms, symmetrically — the write path on
+// Windows, the read path on unix — so each gets a patch below, and each is
+// applied only on the platform that needs it.
 //
 // ─── Windows / Bun incompatibilities (see spike/hello-pty.ts for details) ───
 //
@@ -18,11 +22,26 @@
 //    net.Socket patch from running first. Use createRequire with the absolute
 //    CWD-rooted path to node-pty's entry point so the patch fires before
 //    node-pty's module init.
+//
+// ─── macOS / Linux (unix) Bun incompatibilities ──────────────────────────────
+//
+// 3) Bun tty.ReadStream read bug (unix) — the mirror of (1):
+//    node-pty reads the pty master via `new tty.ReadStream(fd)`. Under Bun that
+//    stream yields nothing at all — no data, no close, no error — so the TUI's
+//    output never arrives and every session hangs until its turn timeout. Fix:
+//    substitute FdReadStream (an fs.read loop) for tty.ReadStream before node-pty
+//    loads. See ./fd-stream.ts.
+//
+// 4) node-pty's prebuilt spawn-helper is not executable (unix):
+//    `bun install` drops the execute bit, and posix_spawnp then fails before any
+//    pty exists. Fix: chmod it at load time. See ./prebuilds.ts.
 
 import { existsSync } from "fs";
 import { createRequire } from "module";
 import type { IPty } from "node-pty";
 import { dirname } from "path";
+import { FdReadStream } from "./fd-stream";
+import { ensureSpawnHelpersExecutable } from "./prebuilds";
 
 // node-pty must be loaded via createRequire (not a static import) so the
 // net.Socket patch below runs first. The createRequire base must point at a
@@ -42,6 +61,16 @@ const _nodePtyCandidates = [
 const _nodePtyPath =
   _nodePtyCandidates.find((p) => existsSync(p)) ?? _nodePtyCandidates[0]!;
 const _require = createRequire(_nodePtyPath);
+
+// ─── Repair node-pty's prebuilt spawn-helper mode (unix) ─────────────────────
+// `bun install` strips the execute bit from node-pty's prebuilds, and on unix
+// node-pty hands spawn-helper to posix_spawnp — which then fails with the opaque
+// "posix_spawnp failed." before any pty exists. Fix it here, before node-pty
+// loads, so every deployment shape (checkout, release archive, compiled binary)
+// is covered by one code path. See ./prebuilds.ts.
+if (process.platform !== "win32") {
+  ensureSpawnHelpersExecutable(dirname(dirname(_nodePtyPath)));
+}
 
 // ─── Patch net.Socket to capture the conin fd (Windows Bun write fix) ────────
 // node-pty creates the conin (write-to-shell) socket SYNCHRONOUSLY inside its
@@ -71,6 +100,14 @@ if (process.platform === "win32") {
     return new OrigSocket(opts);
   };
   net.Socket.prototype = OrigSocket.prototype;
+}
+
+// ─── Substitute tty.ReadStream with an fs.read loop (unix Bun read fix) ──────
+// Patched on the `tty` module object node-pty itself will require, so its
+// `new tty.ReadStream(term.fd)` gets ours. Must happen before node-pty loads.
+if (process.platform !== "win32") {
+  const tty = _require("tty");
+  tty.ReadStream = FdReadStream;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
