@@ -26,6 +26,8 @@ import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { parseArgs } from "../src/cli/args";
+import { binaryName } from "../src/platform";
+import { CLAUDE_BIN as RESOLVED_CLAUDE_BIN } from "../src/pty/env";
 import { startSession } from "../src/pty/session";
 
 // ─── args ────────────────────────────────────────────────────────────────────
@@ -45,8 +47,9 @@ for (const [k, v] of Object.entries(process.env)) {
   if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) continue;
   CHILD_ENV[k] = v;
 }
-const CLAUDE_BIN =
-  process.env.CLAUDE_PTY_BIN ?? "C:\\Users\\arthur\\.local\\bin\\claude.exe";
+// Same resolution the driver uses (CLAUDE_PTY_BIN → PATH → bare name), so a
+// benchmark never silently measures a different binary than a real run.
+const CLAUDE_BIN = RESOLVED_CLAUDE_BIN;
 
 // ─── stats ─────────────────────────────────────────────────────────────────────
 interface Stats {
@@ -119,7 +122,7 @@ function timeSpawnToReady(): Promise<number> {
 async function resolveBin(): Promise<string> {
   const fromEnv = process.env.BENCH_BIN;
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const out = join(tmpdir(), `claude-pty-bench${process.platform === "win32" ? ".exe" : ""}`);
+  const out = join(tmpdir(), `bench-${binaryName()}`);
   process.stdout.write(`Building benchmark binary → ${out} ...\n`);
   const build = Bun.spawn(
     ["bun", "build", "src/main.ts", "--compile", "--outfile", out],

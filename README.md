@@ -222,13 +222,20 @@ Small, single-responsibility modules grouped by concern. `src/main.ts` is the en
 | `src/main.ts` | Entry point. Answers the node-pty agent-fork guard, handles `--daemon` (server mode) and the daemon opt-in, then runs the direct path: parse → prepare → drive → exit. |
 | `src/cli/` | `args.ts` parses argv → `Config` (classify consumed vs. passthrough flags, reject `--print`/`-p`, capture `--json-schema` / `--system-prompt` / `--input-format`, merge the schema instruction into the system prompt); `help.ts` renders `claude-pty`'s own usage; `stdin.ts` reads piped stdin and combines it with the message. |
 | `src/run/` | `prepare.ts` finishes request setup shared by both execution paths (resolve stdin → message or NDJSON turns, resolve the session id, snapshot pre-existing transcripts, missing-input guard); `drive.ts` is the core drive loop (inject → tail → format → exit code), shared verbatim by the direct and daemon paths. |
-| `src/pty/` | `session.ts` — the pty-backed session/state machine (spawn the TUI, inject messages, auto-accept the trust dialog, auto-deny permission boxes, turn-done detection, tree-kill); `signals.ts` — the pure byte-stream detectors (ready / permission / trust) and their keystrokes; `runtime.ts` — the Windows/Bun node-pty plumbing; `env.ts` — binary resolution + env scrubbing; `agent-guard.ts` — the node-pty conpty-agent fork-bomb backstop. |
+| `src/pty/` | `session.ts` — the pty-backed session/state machine (spawn the TUI, inject messages, auto-accept the trust dialog, auto-deny permission boxes, turn-done detection, tree-kill); `signals.ts` — the pure byte-stream detectors (ready / permission / trust) and their keystrokes; `runtime.ts` — the per-platform Bun/node-pty plumbing; `fd-stream.ts` — the `tty.ReadStream` substitute Bun needs on unix; `prebuilds.ts` — restores the execute bit on node-pty's prebuilt `spawn-helper`; `kill-tree.ts` — reaps the TUI's whole process tree on either platform; `env.ts` — binary resolution + env scrubbing; `agent-guard.ts` — the node-pty conpty-agent fork-bomb backstop. |
 | `src/store/` | `locate.ts` resolves which transcript to follow (generated id / `--session-id` / `--resume` / `--continue` discovery, most-recent picking); `tail.ts` is the incremental byte-offset cursor over the growing JSONL. |
 | `src/domain/` | Pure transcript logic: `transcript.ts` (parse lines → typed `TranscriptEvent`s), `types.ts`, `turn.ts` (turn-completion predicates), `reconstruct.ts` (events → the `-p` `result`), `errors.ts` (auth / max-turns detection), `schema.ts` (`--json-schema` extract + minimal validate), `ndjson.ts` (multi-turn input), `chain.ts` (uuid/parentUuid filter isolating parallel same-session resumes), `pricing.ts` (model → cost estimate). |
 | `src/output/` | `text.ts` / `json.ts` / `stream-json.ts` render events/result to each output format. |
 | `src/daemon/` | Optional opt-in daemon (see [Daemon mode](#daemon-mode-optional-opt-in)): `server.ts` / `client.ts` (loopback IPC), `pool.ts` + `logic.ts` (warm-TUI pool), `signature.ts` (warm-pool keying), `protocol.ts` (wire framing + endpoint file), `identity.ts` (build-identity probe that invalidates stale daemons). |
 
-The Windows/Bun specifics of driving ConPTY (capturing the conin fd to work around a Bun `net.Socket` write bug, and loading `node-pty` via `createRequire` so the patch applies before the native module initializes) are documented inline in `src/pty/runtime.ts`, and the original go/no-go proof lives in `spike/hello-pty.ts`.
+Bun breaks node-pty's I/O on **both** platforms, symmetrically, and `src/pty/runtime.ts` is where each side is patched — before node-pty loads, since the fix has to be in place by the time the native module initializes:
+
+| Platform | What Bun breaks | Fix |
+| --- | --- | --- |
+| Windows | The **write** path — node-pty wraps the ConPTY conin handle in `net.Socket({fd, writable:true})`, and Bun rejects every write to it | Capture the conin fd and write with `fs.writeSync` |
+| macOS / Linux | The **read** path — node-pty wraps the pty master in `new tty.ReadStream(fd)`, which under Bun yields nothing at all: no data, no close, no error, so every session hangs to its turn timeout | Substitute `FdReadStream`, an `fs.read` loop (`src/pty/fd-stream.ts`) |
+
+Two smaller unix wrinkles live next to them: `bun install` drops the execute bit from node-pty's prebuilt `spawn-helper`, so `posix_spawnp` fails before any pty exists (`src/pty/prebuilds.ts` chmods it at load time), and `pty.kill()` only SIGHUPs the TUI's own pid, leaving any child that ignores SIGHUP behind (`src/pty/kill-tree.ts` signals the whole process group). All of it is documented inline; the original go/no-go proof lives in `spike/hello-pty.ts`.
 
 ## Scripts
 
@@ -239,7 +246,7 @@ The Windows/Bun specifics of driving ConPTY (capturing the conin fd to work arou
 | `bun run format` / `bun run lint` | Format-only / lint-only |
 | `bun run check-types` | `tsc --noEmit` |
 | `bun run test` | `bun test` |
-| `bun run build` | Compile a binary for the current platform → `claude-pty.exe` |
+| `bun run build` | Compile a binary for the current platform → `claude-pty` (`claude-pty.exe` on Windows) |
 | `bun run build:all` | Cross-compile for all main targets into `dist/` |
 | `bun run bench` | Benchmark end-to-end latency vs `claude -p` (real API calls) — total, time-to-first-event, and the spawn→ready phase. Flags: `--reps N`, `--prompt "…"`, `--no-baseline` |
 
@@ -248,7 +255,7 @@ A [lefthook](https://lefthook.dev) **pre-commit** hook runs `check`, `check-type
 ## Build
 
 ```bash
-bun run build        # → ./claude-pty.exe (current platform)
+bun run build        # → ./claude-pty (./claude-pty.exe on Windows)
 bun run build:all    # → ./dist/claude-pty-<os>-<arch>
 ```
 

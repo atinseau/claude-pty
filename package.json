@@ -1,7 +1,7 @@
 {
   "name": "claude-pty",
   "version": "0.2.0",
-  "module": "index.ts",
+  "module": "src/main.ts",
   "type": "module",
   "private": true,
   "scripts": {
@@ -11,7 +11,7 @@
     "check:fix": "biome check --write src tests",
     "check-types": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build src/main.ts --compile --outfile claude-pty.exe",
+    "build": "bun run scripts/build.ts",
     "build:all": "bun run scripts/build-all.ts",
     "bench": "bun run scripts/bench.ts"
   },
