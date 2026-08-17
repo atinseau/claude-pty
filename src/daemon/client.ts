@@ -2,8 +2,13 @@
 //
 // The daemon CLIENT side: ensure a daemon is up (spawn self detached if needed),
 // send the request, relay response frames to stdout/stderr, return the exit code.
-// Returns null on ANY failure so the caller falls back to the direct path — the
-// daemon is a pure optimization, never a failure point.
+//
+// The daemon is a pure optimization and never a failure point — but that holds
+// only while the output stream is still CLEAN. Frames are relayed straight to the
+// real stdout, so a failure AFTER bytes have been emitted cannot be retried: the
+// direct path would append a second response to the partial one. Hence null
+// ("fall back") is returned only for a failure with nothing yet written; a
+// mid-response failure fails the run. See runAgainstEndpoint.
 //
 // Transport + detached-survival approach validated in spike-E-daemon-m0.md.
 
@@ -133,6 +138,65 @@ async function ensureDaemon(): Promise<Endpoint | null> {
   return null;
 }
 
+/** Where a request's relayed output goes (indirection so tests can capture it). */
+export interface ClientIO {
+  out: (s: string) => void;
+  err: (s: string) => void;
+}
+
+const PROCESS_IO: ClientIO = {
+  out: (s) => process.stdout.write(s),
+  err: (s) => process.stderr.write(s),
+};
+
+/**
+ * Run one request against a KNOWN daemon endpoint.
+ *
+ * Returns the exit code, or null to mean "nothing was emitted, the caller may
+ * safely run the direct path instead".
+ *
+ * The distinction matters: relayed frames are written straight through to the
+ * real stdout, so once ANY byte has been emitted, rerunning the request appends a
+ * SECOND response to the same stream. Measured by SIGKILLing the daemon
+ * mid-response on a stream-json run: the consumer saw `system, system, assistant,
+ * result` — two `init` events with two different session_ids — under exit code 0.
+ * So a mid-response failure fails the run instead of retrying it; only a failure
+ * with a still-clean stream falls back.
+ */
+export async function runAgainstEndpoint(
+  ep: Endpoint,
+  payload: {
+    argv: string[];
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    stdin: string;
+  },
+  io: ClientIO = PROCESS_IO,
+): Promise<number | null> {
+  let wrote = false;
+  try {
+    return await exchange(
+      ep,
+      payload,
+      (s) => {
+        wrote = true;
+        io.out(s);
+      },
+      (s) => {
+        wrote = true;
+        io.err(s);
+      },
+    );
+  } catch (e) {
+    if (!wrote) return null; // clean stream → the direct path can take over
+    io.err(
+      `claude-pty: the daemon stopped mid-response (${e instanceof Error ? e.message : String(e)}); ` +
+        "not retrying, because that would duplicate the partial output already written\n",
+    );
+    return 1;
+  }
+}
+
 /**
  * Run the request through the daemon. Returns the exit code, or null if the
  * daemon could not be used (caller must then run the direct path).
@@ -140,6 +204,7 @@ async function ensureDaemon(): Promise<Endpoint | null> {
 export async function runViaDaemon(
   argv: string[],
   stdinText: string,
+  io: ClientIO = PROCESS_IO,
 ): Promise<number | null> {
   let ep: Endpoint | null;
   try {
@@ -149,19 +214,9 @@ export async function runViaDaemon(
   }
   if (!ep) return null;
 
-  try {
-    return await exchange(
-      ep,
-      {
-        argv,
-        cwd: process.cwd(),
-        env: process.env,
-        stdin: stdinText,
-      },
-      (s) => process.stdout.write(s),
-      (s) => process.stderr.write(s),
-    );
-  } catch {
-    return null; // fall back to direct
-  }
+  return runAgainstEndpoint(
+    ep,
+    { argv, cwd: process.cwd(), env: process.env, stdin: stdinText },
+    io,
+  );
 }
